@@ -10,6 +10,11 @@ import streamlit as st
 from openpyxl import load_workbook
 from pandas.errors import ParserError
 
+try:
+    import msoffcrypto  # type: ignore[import-not-found]
+except ImportError:
+    msoffcrypto = None
+
 
 APP_CSS = """
     <style>
@@ -485,12 +490,14 @@ def correct_classifications_in_workbook(
     classification_header: str,
     code_to_class: dict[str, str],
     target_code_len: int,
+    excel_password: Optional[str],
 ) -> tuple[bytes, int]:
     """
     Updates only the Classification cell value (not formatting) in-place using openpyxl.
     """
 
-    wb = load_workbook(io.BytesIO(file_bytes))
+    workbook_bytes, _ = maybe_decrypt_excel_bytes(file_bytes, excel_password or "")
+    wb = load_workbook(io.BytesIO(workbook_bytes))
     if sheet_name not in wb.sheetnames:
         return file_bytes, 0
 
@@ -691,6 +698,64 @@ uploaded_files = st.file_uploader(
     "Upload Excel file(s)", type=["xlsx", "xlsm", "xls"], accept_multiple_files=True
 )
 
+# Optional password for encrypted Excel files.
+# Note: xlrd (for legacy `.xls`) is the primary engine that supports `password` via pandas.
+excel_password = st.text_input(
+    "Excel password (optional, used for password-protected Excel files)",
+    type="password",
+    value="",
+)
+
+# Detect whether an uploaded Excel file is truly legacy `.xls` (OLE2) or
+# newer `.xlsx/.xlsm` (ZIP) based on the raw file signature.
+def detect_excel_kind(file_bytes: bytes) -> str:
+    # ZIP magic for OOXML: XLSX/XLSM
+    if file_bytes.startswith(b"PK\x03\x04"):
+        return "xlsx"
+    # OLE2 compound document magic for XLS
+    if file_bytes.startswith(b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"):
+        return "xls"
+    return "unknown"
+
+
+def is_office_file_encrypted(file_bytes: bytes) -> bool:
+    """
+    Best-effort check for password-protected Office files.
+    Encrypted modern Excel workbooks commonly use an OLE container, so they can
+    look like legacy `.xls` files from their first bytes alone.
+    """
+    if msoffcrypto is None:
+        return False
+
+    try:
+        office_file = msoffcrypto.OfficeFile(io.BytesIO(file_bytes))
+        return bool(office_file.is_encrypted())
+    except Exception:
+        return False
+
+
+def maybe_decrypt_excel_bytes(file_bytes: bytes, password: str) -> tuple[bytes, bool]:
+    """
+    Decrypt password-protected Office files (including encrypted `.xlsx`) when possible.
+    Returns `(bytes_to_read, was_decrypted)`.
+    """
+    if not password:
+        return file_bytes, False
+    if msoffcrypto is None:
+        return file_bytes, False
+
+    try:
+        office_file = msoffcrypto.OfficeFile(io.BytesIO(file_bytes))
+    except Exception:
+        return file_bytes, False
+    if not office_file.is_encrypted():
+        return file_bytes, False
+
+    office_file.load_key(password=password)
+    decrypted = io.BytesIO()
+    office_file.decrypt(decrypted)
+    return decrypted.getvalue(), True
+
 # Streamlit re-runs the script on every widget change. File uploads are usually
 # preserved by the widget, but storing bytes in session_state makes this
 # behavior explicit and avoids losing them on re-runs.
@@ -704,7 +769,112 @@ if not file_payloads:
     st.info("📂 Upload one or more files to start.")
     st.stop()
 
-excel = pd.ExcelFile(io.BytesIO(file_payloads[0][1]))
+# Pick engine based on file bytes signature, but also consider filename extension.
+# Signature detection can be wrong for mislabelled uploads, truncated files, or proxies.
+first_file_name = file_payloads[0][0] or ""
+first_bytes = file_payloads[0][1]
+first_raw_kind = detect_excel_kind(first_bytes)
+first_is_encrypted = is_office_file_encrypted(first_bytes)
+first_ext = first_file_name.rsplit(".", 1)[-1].lower() if "." in first_file_name else ""
+
+if first_is_encrypted and not excel_password:
+    st.error(
+        "The first uploaded workbook appears to be password-protected.\n\n"
+        f"Filename: `{first_file_name}`\n"
+        f"Signature detected kind: `{first_raw_kind}`\n"
+        f"Filename extension: `{first_ext}`\n\n"
+        "Please enter the workbook password and try again. "
+        "Encrypted modern `.xlsx` files often have an OLE signature, so they can "
+        "look like legacy `.xls` files until they are decrypted."
+    )
+    st.stop()
+
+try:
+    prepared_first_bytes, first_was_decrypted = maybe_decrypt_excel_bytes(first_bytes, excel_password)
+except Exception as e:
+    st.error(f"Unable to decrypt `{first_file_name}`. Check the Excel password and try again.\n\nDetails: {e}")
+    st.stop()
+first_kind = detect_excel_kind(prepared_first_bytes)
+
+
+def engine_kwargs_for(*, extra_kwargs: Optional[dict] = None) -> dict:
+    base_kwargs: dict = {}
+    if extra_kwargs:
+        base_kwargs.update(extra_kwargs)
+    return base_kwargs
+
+
+engine_attempts: list[tuple[str, dict]] = []
+attempt_dedup_keys: set[tuple[str, bool]] = set()
+
+
+def add_attempt(engine_name: str, *, extra_kwargs: Optional[dict] = None) -> None:
+    extra_kwargs = extra_kwargs or {}
+    ignore_corruption = bool(extra_kwargs.get("ignore_workbook_corruption"))
+    key = (engine_name, ignore_corruption)
+    if key in attempt_dedup_keys:
+        return
+    attempt_dedup_keys.add(key)
+    engine_attempts.append((engine_name, engine_kwargs_for(extra_kwargs=extra_kwargs)))
+
+
+ext_preferred_engine: Optional[str] = None
+if first_ext in {"xlsx", "xlsm"}:
+    ext_preferred_engine = "openpyxl"
+elif first_ext == "xls":
+    ext_preferred_engine = "xlrd"
+
+signature_preferred_engine: Optional[str] = None
+if first_kind == "xlsx":
+    signature_preferred_engine = "openpyxl"
+elif first_kind == "xls":
+    signature_preferred_engine = "xlrd"
+
+if ext_preferred_engine:
+    add_attempt(ext_preferred_engine)
+if signature_preferred_engine and signature_preferred_engine != ext_preferred_engine:
+    add_attempt(signature_preferred_engine)
+
+# Always try the other engine as a fallback.
+if ext_preferred_engine == "openpyxl":
+    add_attempt("xlrd")
+elif ext_preferred_engine == "xlrd":
+    add_attempt("openpyxl")
+else:
+    # Unknown extension: fall back to signature-based choice, then the other engine.
+    if signature_preferred_engine == "xlrd":
+        add_attempt("openpyxl")
+    else:
+        add_attempt("xlrd")
+
+# Best-effort: sometimes xlrd can be coaxed past minor corruption.
+if any(engine_name == "xlrd" for engine_name, _ in engine_attempts):
+    add_attempt("xlrd", extra_kwargs={"ignore_workbook_corruption": True})
+
+
+excel = None
+attempt_errors: list[str] = []
+for engine_name, engine_kwargs in engine_attempts:
+    try:
+        excel = pd.ExcelFile(io.BytesIO(prepared_first_bytes), engine=engine_name, engine_kwargs=engine_kwargs)
+        attempt_errors = []
+        break
+    except Exception as e:
+        attempt_errors.append(f"- {engine_name} with {engine_kwargs}: {e}")
+
+if excel is None:
+    st.error(
+        "Unable to read the first uploaded Excel workbook.\n\n"
+        f"Filename: `{first_file_name}`\n"
+        f"Signature detected kind: `{first_kind}`\n"
+        f"Filename extension: `{first_ext}`\n"
+        f"Decrypted before loading: `{first_was_decrypted}`\n"
+        f"First 8 bytes (hex): `{prepared_first_bytes[:8].hex()}`\n\n"
+        "Engine attempts:\n"
+        + "\n".join(attempt_errors[:6])
+    )
+    st.stop()
+
 preferred_sheets = ["Settled Apps - Details", "Submitted Apps - Details"]
 default_sheet_index = 0
 for preferred_name in preferred_sheets:
@@ -730,20 +900,79 @@ loaded_frames = []
 loaded_file_names = []
 skipped_file_names = []
 for file_name, file_bytes in file_payloads:
-    try:
-        frame = pd.read_excel(
-            io.BytesIO(file_bytes),
-            sheet_name=sheet,
-            header=int(header_row) - 1,
+    if is_office_file_encrypted(file_bytes) and not excel_password:
+        st.warning(
+            f"Skipped `{file_name}` because it appears to be password-protected. "
+            "Enter the Excel password to load it."
         )
-        if requested_range:
+        skipped_file_names.append(file_name)
+        continue
+
+    try:
+        prepared_file_bytes, _ = maybe_decrypt_excel_bytes(file_bytes, excel_password)
+    except Exception as e:
+        st.warning(f"Skipped `{file_name}` because it could not be decrypted with the supplied password: {e}")
+        skipped_file_names.append(file_name)
+        continue
+
+    kind = detect_excel_kind(prepared_file_bytes)
+    file_lower = (file_name or "").lower()
+    ext = file_lower.rsplit(".", 1)[-1] if "." in file_lower else ""
+    try:
+        engine_candidates: list[str]
+        if ext in {"xlsx", "xlsm"}:
+            engine_candidates = ["openpyxl", "xlrd"]
+        elif ext == "xls":
+            engine_candidates = ["xlrd", "openpyxl"]
+        elif kind == "xls":
+            engine_candidates = ["xlrd"]
+        elif kind == "xlsx":
+            engine_candidates = ["openpyxl"]
+        else:
+            engine_candidates = ["openpyxl", "xlrd"]
+
+        last_err: Optional[Exception] = None
+        frame = None
+        for candidate in engine_candidates:
+            file_engine_kwargs = {}
             try:
                 frame = pd.read_excel(
-                    io.BytesIO(file_bytes),
+                    io.BytesIO(prepared_file_bytes),
                     sheet_name=sheet,
                     header=int(header_row) - 1,
-                    usecols=requested_range,
+                    engine=candidate,
+                    engine_kwargs=file_engine_kwargs,
                 )
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                frame = None
+        if frame is None:
+            raise last_err if last_err else RuntimeError("Unable to read uploaded Excel file.")
+
+        if requested_range:
+            try:
+                # Re-read using the same engine that succeeded above (best-effort).
+                # If the file is "unknown", re-try both engines.
+                succeeded = False
+                for candidate in engine_candidates:
+                    file_engine_kwargs = {}
+                    try:
+                        frame = pd.read_excel(
+                            io.BytesIO(prepared_file_bytes),
+                            sheet_name=sheet,
+                            header=int(header_row) - 1,
+                            usecols=requested_range,
+                            engine=candidate,
+                            engine_kwargs=file_engine_kwargs,
+                        )
+                        succeeded = True
+                        break
+                    except Exception:
+                        continue
+                if not succeeded:
+                    raise
             except ParserError:
                 st.warning(
                     f"`{file_name}`: column range `{requested_range}` is wider than this sheet. "
@@ -986,18 +1215,30 @@ if apply_2026_fix:
         # Also correct the uploaded workbook (preserving formatting) for the requested download.
         target_sheet_name = "Dashboard" if "Dashboard" in excel.sheet_names else sheet
         primary_name, primary_bytes = file_payloads[0]
-        with st.spinner(f"Updating '{target_sheet_name}' sheet classifications in uploaded workbook..."):
-            corrected_dashboard_bytes, updated_count = correct_classifications_in_workbook(
-                primary_bytes,
-                sheet_name=target_sheet_name,
-                header_row=int(header_row),
-                advisor_code_header=advisor_code_col,
-                classification_header=class_col,
-                code_to_class=code_to_class,
-                target_code_len=target_code_len,
+        primary_kind = detect_excel_kind(primary_bytes)
+        if primary_kind == "xlsx":
+            with st.spinner(
+                f"Updating '{target_sheet_name}' sheet classifications in uploaded workbook..."
+            ):
+                corrected_dashboard_bytes, updated_count = correct_classifications_in_workbook(
+                    primary_bytes,
+                    sheet_name=target_sheet_name,
+                    header_row=int(header_row),
+                    advisor_code_header=advisor_code_col,
+                    classification_header=class_col,
+                    code_to_class=code_to_class,
+                    target_code_len=target_code_len,
+                    excel_password=excel_password or None,
+                )
+            corrected_dashboard_file_name = f"corrected_{primary_name}"
+            st.caption(
+                f"2026 mapping updated {updated_count} Dashboard row(s) in the corrected download."
             )
-        corrected_dashboard_file_name = f"corrected_{primary_name}"
-        st.caption(f"2026 mapping updated {updated_count} Dashboard row(s) in the corrected download.")
+        else:
+            st.warning(
+                f"Uploaded file is {primary_kind}; Dashboard formatting-preserving edit "
+                "requires a .xlsx (ZIP) file. The in-app classifications are still corrected."
+            )
 
 df["AC"] = normalize_number(df[ac_col]) if ac_col else 0
 df["NSC"] = normalize_number(df[nsc_col]) if nsc_col else 0
