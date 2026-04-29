@@ -7,10 +7,118 @@ from pandas.errors import ParserError
 
 
 st.set_page_config(page_title="Manpower Validation System", layout="wide")
+st.markdown(
+    """
+    <style>
+        :root {
+            --sl-yellow: #ffd100;
+            --sl-yellow-soft: #fff3b3;
+            --sl-blue: #003da5;
+            --sl-blue-dark: #002a73;
+            --sl-gray: #f7f9fc;
+            --sl-text: #1b1f24;
+        }
+
+        .stApp {
+            background: linear-gradient(180deg, #fffef8 0%, #ffffff 220px);
+            color: var(--sl-text);
+        }
+
+        div[data-testid="stSidebar"] {
+            background: linear-gradient(180deg, var(--sl-blue) 0%, var(--sl-blue-dark) 100%);
+        }
+        div[data-testid="stSidebar"] * {
+            color: #ffffff !important;
+        }
+        div[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h1,
+        div[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h2,
+        div[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3 {
+            color: var(--sl-yellow) !important;
+        }
+
+        .sl-hero {
+            padding: 14px 18px;
+            border-radius: 14px;
+            border-left: 8px solid var(--sl-yellow);
+            background: linear-gradient(90deg, #ffffff 0%, #fffbe6 100%);
+            box-shadow: 0 4px 14px rgba(0, 61, 165, 0.12);
+            margin-bottom: 10px;
+        }
+        .sl-hero-title {
+            color: var(--sl-blue);
+            font-weight: 700;
+            font-size: 1.2rem;
+            margin-bottom: 3px;
+        }
+        .sl-hero-sub {
+            color: #334155;
+            font-size: 0.95rem;
+        }
+
+        div[data-testid="stMetric"] {
+            background: #ffffff;
+            border: 1px solid #cfd8ea;
+            border-radius: 12px;
+            padding: 12px 14px;
+            box-shadow: 0 4px 12px rgba(0, 61, 165, 0.14);
+        }
+        div[data-testid="stMetricLabel"] {
+            color: var(--sl-blue-dark);
+            font-weight: 700;
+            font-size: 0.95rem;
+        }
+        div[data-testid="stMetricValue"] {
+            color: #0b132b;
+            font-weight: 800;
+            font-size: 2rem;
+            line-height: 1.2;
+            white-space: normal !important;
+            overflow: visible !important;
+            text-overflow: clip !important;
+            word-break: break-word;
+        }
+        div[data-testid="stMetricDelta"] {
+            font-size: 0.9rem;
+            font-weight: 700;
+        }
+
+        div[data-baseweb="tab-list"] {
+            background: var(--sl-gray);
+            border-radius: 10px;
+            padding: 6px;
+        }
+        button[role="tab"][aria-selected="true"] {
+            background: var(--sl-yellow) !important;
+            color: #111827 !important;
+            border-radius: 8px !important;
+        }
+
+        .stDownloadButton button {
+            background: var(--sl-blue);
+            color: #ffffff;
+            border: 1px solid var(--sl-blue);
+            border-radius: 8px;
+        }
+        .stDownloadButton button:hover {
+            border-color: var(--sl-yellow);
+            box-shadow: 0 0 0 2px rgba(255, 209, 0, 0.25);
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 st.title("Manpower Validation System")
-st.caption(
-    "Upload an Excel file and analyze total production per advisor classification "
-    "(A, B, C, etc.) with AC, NSC, and lives per advisor, monthly and quarterly."
+st.markdown(
+    """
+    <div class="sl-hero">
+        <div class="sl-hero-title">Manpower Validation System</div>
+        <div class="sl-hero-sub">
+            Upload an Excel file and analyze production by advisor classification with
+            AC, NSC, and Lives across monthly and quarterly views.
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 
@@ -100,14 +208,27 @@ def performance_status(actual: float, target: float) -> str:
     return "Off track (below target)"
 
 
-uploaded = st.file_uploader("Upload Excel file", type=["xlsx", "xlsm", "xls"])
+def format_compact(value: float) -> str:
+    abs_val = abs(value)
+    if abs_val >= 1_000_000_000:
+        return f"{value / 1_000_000_000:.2f}B"
+    if abs_val >= 1_000_000:
+        return f"{value / 1_000_000:.2f}M"
+    if abs_val >= 1_000:
+        return f"{value / 1_000:.1f}K"
+    return f"{value:,.2f}" if value % 1 else f"{value:,.0f}"
 
-if not uploaded:
-    st.info("Upload a file to start.")
+
+uploaded_files = st.file_uploader(
+    "Upload Excel file(s)", type=["xlsx", "xlsm", "xls"], accept_multiple_files=True
+)
+
+if not uploaded_files:
+    st.info("Upload one or more files to start.")
     st.stop()
 
-file_bytes = uploaded.read()
-excel = pd.ExcelFile(io.BytesIO(file_bytes))
+file_payloads = [(f.name, f.read()) for f in uploaded_files]
+excel = pd.ExcelFile(io.BytesIO(file_payloads[0][1]))
 preferred_sheets = ["Settled Apps - Details", "Submitted Apps - Details"]
 default_sheet_index = 0
 for preferred_name in preferred_sheets:
@@ -128,34 +249,60 @@ column_range = st.text_input(
     value="",
     help="Optional. Example: A:Z or A:AA. Leave blank to read all available columns.",
 )
-raw_df = pd.read_excel(
-    io.BytesIO(file_bytes),
-    sheet_name=sheet,
-    header=int(header_row) - 1,
-)
 requested_range = column_range.strip()
-if requested_range:
+loaded_frames = []
+loaded_file_names = []
+skipped_file_names = []
+for file_name, file_bytes in file_payloads:
     try:
-        raw_df = pd.read_excel(
+        frame = pd.read_excel(
             io.BytesIO(file_bytes),
             sheet_name=sheet,
             header=int(header_row) - 1,
-            usecols=requested_range,
         )
-    except ParserError:
-        st.warning(
-            f"Column range `{requested_range}` is wider than available columns in this sheet. "
-            "Loaded all available columns instead."
-        )
-raw_df = raw_df.dropna(how="all")
-raw_df.columns = [str(c).strip() for c in raw_df.columns]
-raw_df = raw_df.loc[:, ~pd.Index(raw_df.columns).str.startswith("Unnamed:")]
+        if requested_range:
+            try:
+                frame = pd.read_excel(
+                    io.BytesIO(file_bytes),
+                    sheet_name=sheet,
+                    header=int(header_row) - 1,
+                    usecols=requested_range,
+                )
+            except ParserError:
+                st.warning(
+                    f"`{file_name}`: column range `{requested_range}` is wider than this sheet. "
+                    "Loaded all available columns instead."
+                )
+        frame = frame.dropna(how="all")
+        frame.columns = [str(c).strip() for c in frame.columns]
+        frame = frame.loc[:, ~pd.Index(frame.columns).str.startswith("Unnamed:")]
+        if not frame.empty:
+            frame["Source File"] = file_name
+            loaded_frames.append(frame)
+            loaded_file_names.append(file_name)
+    except ValueError:
+        skipped_file_names.append(file_name)
 
-if raw_df.empty:
-    st.warning("Selected sheet is empty.")
+if skipped_file_names:
+    st.warning(
+        f"Skipped {len(skipped_file_names)} file(s) that do not have sheet `{sheet}`: "
+        + ", ".join(skipped_file_names)
+    )
+
+if not loaded_frames:
+    st.warning("No valid rows were loaded from uploaded files.")
     st.stop()
 
-st.caption(f"Detected columns: {', '.join(raw_df.columns)}")
+raw_df = pd.concat(loaded_frames, ignore_index=True, sort=False)
+
+if raw_df.empty:
+    st.warning("Selected sheet is empty across uploaded files.")
+    st.stop()
+
+st.caption(
+    f"Loaded {len(loaded_file_names)} file(s), {len(raw_df):,} rows. "
+    f"Detected columns: {', '.join(raw_df.columns)}"
+)
 
 st.subheader("1) Map your columns")
 all_cols = list(raw_df.columns)
@@ -386,9 +533,13 @@ if latest_month is not None and previous_month is not None:
     delta_lives = latest_month["Lives"] - previous_month["Lives"]
 
 kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-kpi1.metric("Total AC", f"{total_ac:,.2f}", "" if delta_ac is None else f"{delta_ac:+,.2f}")
-kpi2.metric("Total NSC", f"{total_nsc:,.2f}", "" if delta_nsc is None else f"{delta_nsc:+,.2f}")
-kpi3.metric("Total Lives", f"{total_lives:,.0f}", "" if delta_lives is None else f"{delta_lives:+,.0f}")
+kpi1.metric("Total AC", format_compact(total_ac), "" if delta_ac is None else format_compact(delta_ac))
+kpi2.metric("Total NSC", format_compact(total_nsc), "" if delta_nsc is None else format_compact(delta_nsc))
+kpi3.metric(
+    "Total Lives",
+    format_compact(total_lives),
+    "" if delta_lives is None else format_compact(delta_lives),
+)
 kpi4.metric("Active Advisors", f"{active_advisors:,}")
 kpi5.metric("Records", f"{record_count:,}")
 
