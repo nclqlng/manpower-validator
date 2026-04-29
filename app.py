@@ -921,7 +921,8 @@ for file_name, file_bytes in file_payloads:
     try:
         engine_candidates: list[str]
         if ext in {"xlsx", "xlsm"}:
-            engine_candidates = ["openpyxl", "xlrd"]
+            # xlrd does not support .xlsx; keep this path strictly openpyxl.
+            engine_candidates = ["openpyxl"]
         elif ext == "xls":
             engine_candidates = ["xlrd", "openpyxl"]
         elif kind == "xls":
@@ -932,6 +933,7 @@ for file_name, file_bytes in file_payloads:
             engine_candidates = ["openpyxl", "xlrd"]
 
         last_err: Optional[Exception] = None
+        succeeded_engine: Optional[str] = None
         frame = None
         for candidate in engine_candidates:
             file_engine_kwargs = {}
@@ -944,6 +946,7 @@ for file_name, file_bytes in file_payloads:
                     engine_kwargs=file_engine_kwargs,
                 )
                 last_err = None
+                succeeded_engine = candidate
                 break
             except Exception as e:
                 last_err = e
@@ -954,9 +957,8 @@ for file_name, file_bytes in file_payloads:
         if requested_range:
             try:
                 # Re-read using the same engine that succeeded above (best-effort).
-                # If the file is "unknown", re-try both engines.
                 succeeded = False
-                for candidate in engine_candidates:
+                for candidate in ([succeeded_engine] if succeeded_engine else engine_candidates):
                     file_engine_kwargs = {}
                     try:
                         frame = pd.read_excel(
@@ -1288,8 +1290,58 @@ with st.sidebar.expander("ℹ️ How to use this dashboard", expanded=False):
         "- Download full Excel report with charts and summaries."
     )
 selected_classes = st.sidebar.multiselect("Classification", classes, default=classes)
-selected_months = st.sidebar.multiselect("Months", period_months, default=period_months)
-selected_quarters = st.sidebar.multiselect("Quarters", period_quarters, default=period_quarters)
+# Build month<->quarter links from available data.
+month_quarter_pairs = (
+    df[["Period Month", "Period Quarter"]]
+    .dropna()
+    .astype(str)
+    .drop_duplicates()
+)
+month_to_quarter: dict[str, str] = {}
+quarter_to_months: dict[str, list[str]] = {}
+for _, row in month_quarter_pairs.iterrows():
+    month_label = str(row["Period Month"])
+    quarter_label = str(row["Period Quarter"])
+    if month_label and month_label != "Unknown" and quarter_label and quarter_label != "Unknown":
+        month_to_quarter[month_label] = quarter_label
+        quarter_to_months.setdefault(quarter_label, []).append(month_label)
+
+saved_months = st.session_state.get("filter_months", period_months)
+saved_quarters = st.session_state.get("filter_quarters", period_quarters)
+saved_months = [m for m in saved_months if m in period_months] or period_months
+saved_quarters = [q for q in saved_quarters if q in period_quarters] or period_quarters
+
+month_options = period_months
+quarter_options = period_quarters
+
+# If a subset of quarters is selected, months are limited to those quarter(s).
+if 0 < len(saved_quarters) < len(period_quarters):
+    allowed_months = {
+        month
+        for quarter in saved_quarters
+        for month in quarter_to_months.get(quarter, [])
+    }
+    constrained_months = [m for m in period_months if m in allowed_months]
+    if constrained_months:
+        month_options = constrained_months
+        saved_months = [m for m in saved_months if m in month_options] or month_options
+
+# If a subset of months is selected, quarters are limited to those month(s).
+if 0 < len(saved_months) < len(period_months):
+    allowed_quarters = {month_to_quarter.get(month) for month in saved_months}
+    constrained_quarters = [
+        q for q in period_quarters if q in allowed_quarters and q is not None
+    ]
+    if constrained_quarters:
+        quarter_options = constrained_quarters
+        saved_quarters = [q for q in saved_quarters if q in quarter_options] or quarter_options
+
+selected_months = st.sidebar.multiselect(
+    "Months", month_options, default=saved_months, key="filter_months"
+)
+selected_quarters = st.sidebar.multiselect(
+    "Quarters", quarter_options, default=saved_quarters, key="filter_quarters"
+)
 top_n = st.sidebar.slider("Top advisors to show", min_value=5, max_value=30, value=10, step=1)
 ranking_metric = st.sidebar.selectbox("Advisor ranking metric", ["AC", "NSC", "Lives"], index=0)
 st.sidebar.header("🎯 Performance Targets")
@@ -1405,6 +1457,36 @@ if latest_month is not None and previous_month is not None:
     delta_nsc = latest_month["NSC"] - previous_month["NSC"]
     delta_lives = latest_month["Lives"] - previous_month["Lives"]
 
+advisor_record_monthly = (
+    filtered[filtered["Period Month"] != "Unknown"]
+    .groupby("Period Month", dropna=False)
+    .agg(
+        {
+            "Advisor": pd.Series.nunique,
+            "Period Month": "size",
+        }
+    )
+    .rename(columns={"Advisor": "Active Advisors", "Period Month": "Records"})
+    .reset_index()
+)
+if not advisor_record_monthly.empty:
+    advisor_record_monthly["SortMonth"] = pd.PeriodIndex(
+        advisor_record_monthly["Period Month"], freq="M"
+    )
+    advisor_record_monthly = advisor_record_monthly.sort_values("SortMonth").drop(
+        columns=["SortMonth"]
+    )
+
+delta_active_advisors = None
+delta_records = None
+if len(advisor_record_monthly) >= 2:
+    latest_counts = advisor_record_monthly.iloc[-1]
+    previous_counts = advisor_record_monthly.iloc[-2]
+    delta_active_advisors = int(
+        latest_counts["Active Advisors"] - previous_counts["Active Advisors"]
+    )
+    delta_records = int(latest_counts["Records"] - previous_counts["Records"])
+
 kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
 kpi1.metric("Total AC", format_compact(total_ac), "" if delta_ac is None else format_compact(delta_ac))
 kpi2.metric("Total NSC", format_compact(total_nsc), "" if delta_nsc is None else format_compact(delta_nsc))
@@ -1413,8 +1495,12 @@ kpi3.metric(
     format_compact(total_lives),
     "" if delta_lives is None else format_compact(delta_lives),
 )
-kpi4.metric("Active Advisors", f"{active_advisors:,}")
-kpi5.metric("Records", f"{record_count:,}")
+kpi4.metric(
+    "Active Advisors",
+    f"{active_advisors:,}",
+    "" if delta_active_advisors is None else f"{delta_active_advisors:+,}",
+)
+kpi5.metric("Records", f"{record_count:,}", "" if delta_records is None else f"{delta_records:+,}")
 
 status_ac = performance_status(total_ac, target_ac)
 status_nsc = performance_status(total_nsc, target_nsc)
