@@ -6,9 +6,7 @@ import streamlit as st
 from pandas.errors import ParserError
 
 
-st.set_page_config(page_title="Manpower Validation System", layout="wide")
-st.markdown(
-    """
+APP_CSS = """
     <style>
         :root {
             --sl-yellow: #ffd100;
@@ -103,13 +101,34 @@ st.markdown(
             border-color: var(--sl-yellow);
             box-shadow: 0 0 0 2px rgba(255, 209, 0, 0.25);
         }
+
+        .sl-section {
+            margin-top: 0.8rem;
+            margin-bottom: 0.4rem;
+            border-left: 5px solid var(--sl-yellow);
+            padding-left: 10px;
+        }
+        .sl-section-title {
+            color: var(--sl-blue-dark);
+            font-weight: 800;
+            font-size: 1.1rem;
+            margin-bottom: 2px;
+        }
+        .sl-section-sub {
+            color: #475569;
+            font-size: 0.9rem;
+        }
     </style>
-    """,
-    unsafe_allow_html=True,
-)
-st.title("Manpower Validation System")
-st.markdown(
-    """
+"""
+
+
+def apply_theme() -> None:
+    st.markdown(APP_CSS, unsafe_allow_html=True)
+
+
+def render_hero() -> None:
+    st.markdown(
+        """
     <div class="sl-hero">
         <div class="sl-hero-title">Manpower Validation System</div>
         <div class="sl-hero-sub">
@@ -118,8 +137,25 @@ st.markdown(
         </div>
     </div>
     """,
-    unsafe_allow_html=True,
-)
+        unsafe_allow_html=True,
+    )
+
+
+def render_section(title: str, subtitle: str) -> None:
+    st.markdown(
+        f"""
+        <div class="sl-section">
+            <div class="sl-section-title">{title}</div>
+            <div class="sl-section-sub">{subtitle}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+st.set_page_config(page_title="Manpower Validation System", layout="wide")
+apply_theme()
+render_hero()
 
 
 def normalize_number(series: pd.Series) -> pd.Series:
@@ -303,8 +339,16 @@ st.caption(
     f"Loaded {len(loaded_file_names)} file(s), {len(raw_df):,} rows. "
     f"Detected columns: {', '.join(raw_df.columns)}"
 )
+with st.expander("Loaded files summary", expanded=False):
+    file_summary = (
+        raw_df.groupby("Source File", dropna=False)
+        .size()
+        .reset_index(name="Rows Loaded")
+        .sort_values("Rows Loaded", ascending=False)
+    )
+    st.dataframe(file_summary, use_container_width=True, hide_index=True)
 
-st.subheader("1) Map your columns")
+render_section("1) Data Mapping", "Map source columns to advisor, classification, metrics, and date.")
 all_cols = list(raw_df.columns)
 none_opt = ["(none)"] + all_cols
 
@@ -430,7 +474,7 @@ if series_is_mostly_numeric(df["Classification"]):
         "or provide your class-code-to-A/B/C mapping rules."
     )
 
-st.subheader("2) Filters")
+render_section("2) Analysis Filters", "Narrow down classification and time periods for focused insights.")
 classes = sorted({str(c) for c in df["Classification"].dropna() if str(c).strip()})
 period_months = sort_period_labels(
     list({str(p) for p in df["Period Month"].fillna("Unknown")}), freq="M"
@@ -440,6 +484,13 @@ period_quarters = sort_period_labels(
 )
 
 st.sidebar.header("Dashboard Filters")
+with st.sidebar.expander("How to use this dashboard", expanded=False):
+    st.markdown(
+        "- Upload one or more files with the same layout.\n"
+        "- Pick the target detail sheet and map columns once.\n"
+        "- Use filters to focus the story by period/classification.\n"
+        "- Download full Excel report with charts and summaries."
+    )
 selected_classes = st.sidebar.multiselect("Classification", classes, default=classes)
 selected_months = st.sidebar.multiselect("Months", period_months, default=period_months)
 selected_quarters = st.sidebar.multiselect("Quarters", period_quarters, default=period_quarters)
@@ -460,7 +511,7 @@ if filtered.empty:
     st.warning("No rows match your filters.")
     st.stop()
 
-st.subheader("3) Results")
+render_section("3) Results & Story", "Executive summary, drivers, trends, data quality, and exports.")
 
 monthly_summary = (
     filtered.groupby(["Period Month", "Classification"], dropna=False)[["AC", "NSC", "Lives"]]
