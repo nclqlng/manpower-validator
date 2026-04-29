@@ -1,8 +1,10 @@
 import io
+import socket
 from typing import Optional
 
 import csv
 import math
+from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 import pandas as pd
@@ -418,23 +420,35 @@ def fetch_2026_advisor_code_to_classification() -> tuple[dict[str, str], int]:
     """
 
     url = f"{GSHEET_2026_BASE_URL}/pub?gid={GSHEET_2026_GID}&single=true&output=csv"
-    raw = urlopen(url, timeout=30).read().decode("utf-8", errors="replace")
+    raw = ""
+    for timeout_seconds in (15, 30):
+        try:
+            raw = urlopen(url, timeout=timeout_seconds).read().decode("utf-8", errors="replace")
+            break
+        except (TimeoutError, socket.timeout, URLError, HTTPError, OSError):
+            continue
+
+    if not raw:
+        return {}, 0
 
     mapping: dict[str, str] = {}
-    for row in csv.reader(io.StringIO(raw)):
-        if not row or len(row) < 5:
-            continue
-        row_idx = row[0].strip() if row[0] is not None else ""
-        if not row_idx.isdigit():
-            continue
+    try:
+        for row in csv.reader(io.StringIO(raw)):
+            if not row or len(row) < 5:
+                continue
+            row_idx = row[0].strip() if row[0] is not None else ""
+            if not row_idx.isdigit():
+                continue
 
-        # Based on the published CSV structure:
-        #   0: row index, 1: advisor name, 2: advisor code, 3: coding date, 4: classification
-        code = (row[2] or "").strip()
-        cls = (row[4] or "").strip().upper()
-        if not code or not cls:
-            continue
-        mapping[code] = cls  # later rows override earlier ones
+            # Based on the published CSV structure:
+            #   0: row index, 1: advisor name, 2: advisor code, 3: coding date, 4: classification
+            code = (row[2] or "").strip()
+            cls = (row[4] or "").strip().upper()
+            if not code or not cls:
+                continue
+            mapping[code] = cls  # later rows override earlier ones
+    except (csv.Error, OSError):
+        return {}, 0
 
     target_code_len = max((len(k) for k in mapping.keys()), default=0)
     return mapping, target_code_len
