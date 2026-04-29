@@ -1,8 +1,13 @@
 import io
 from typing import Optional
 
+import csv
+import math
+from urllib.request import urlopen
+
 import pandas as pd
 import streamlit as st
+from openpyxl import load_workbook
 from pandas.errors import ParserError
 
 
@@ -390,6 +395,146 @@ def normalize_number(series: pd.Series) -> pd.Series:
     return pd.to_numeric(cleaned, errors="coerce").fillna(0)
 
 
+# ---- 2026 Advisor Code -> Classification mapping (Google Sheets) ----
+GSHEET_2026_BASE_URL = (
+    "https://docs.google.com/spreadsheets/d/e/"
+    "2PACX-1vRGyFGolZgI4lBcvNQoywRotN6i8oihoONR53pdD2RQomtVl1RwVieG2M2Vn-zM5A"
+)
+GSHEET_2026_GID = "2022092860"
+
+
+@st.cache_data(ttl=24 * 3600)
+def fetch_2026_advisor_code_to_classification() -> tuple[dict[str, str], int]:
+    """
+    Fetches the published 2026 tab as CSV, then builds:
+      Advisor Code (string) -> Classification (UPPER string)
+
+    Note: the CSV includes extra header rows; data rows start with a numeric index.
+    """
+
+    url = f"{GSHEET_2026_BASE_URL}/pub?gid={GSHEET_2026_GID}&single=true&output=csv"
+    raw = urlopen(url, timeout=30).read().decode("utf-8", errors="replace")
+
+    mapping: dict[str, str] = {}
+    for row in csv.reader(io.StringIO(raw)):
+        if not row or len(row) < 5:
+            continue
+        row_idx = row[0].strip() if row[0] is not None else ""
+        if not row_idx.isdigit():
+            continue
+
+        # Based on the published CSV structure:
+        #   0: row index, 1: advisor name, 2: advisor code, 3: coding date, 4: classification
+        code = (row[2] or "").strip()
+        cls = (row[4] or "").strip().upper()
+        if not code or not cls:
+            continue
+        mapping[code] = cls  # later rows override earlier ones
+
+    target_code_len = max((len(k) for k in mapping.keys()), default=0)
+    return mapping, target_code_len
+
+
+def normalize_advisor_code_value(value: object, target_len: int) -> Optional[str]:
+    if value is None:
+        return None
+
+    code_str: str
+    if isinstance(value, str):
+        code_str = value.strip().replace("\u00a0", " ")
+    elif isinstance(value, bool):
+        return None
+    elif isinstance(value, int):
+        code_str = str(value)
+    elif isinstance(value, float):
+        if math.isnan(value):
+            return None
+        code_str = str(int(value)) if value.is_integer() else str(value).split(".")[0]
+    else:
+        code_str = str(value).strip()
+
+    if not code_str or code_str.lower() in {"nan", "none"}:
+        return None
+
+    # Common case: Excel stores codes as numeric and pandas/openpyxl may represent them as X.0
+    if code_str.endswith(".0"):
+        maybe_int = code_str[:-2]
+        if maybe_int.isdigit():
+            code_str = maybe_int
+
+    if target_len and code_str.isdigit() and len(code_str) < target_len:
+        code_str = code_str.zfill(target_len)
+
+    return code_str
+
+
+def normalize_advisor_code_series(series: pd.Series, target_len: int) -> pd.Series:
+    s = series.astype(str).str.strip().replace({"nan": "", "None": ""})
+    s = s.str.replace(r"\.0$", "", regex=True)
+    if target_len:
+        mask = s.str.fullmatch(r"\d+")
+        s.loc[mask] = s.loc[mask].str.zfill(target_len)
+    return s.replace({"": pd.NA})
+
+
+def correct_classifications_in_workbook(
+    file_bytes: bytes,
+    sheet_name: str,
+    header_row: int,
+    advisor_code_header: str,
+    classification_header: str,
+    code_to_class: dict[str, str],
+    target_code_len: int,
+) -> tuple[bytes, int]:
+    """
+    Updates only the Classification cell value (not formatting) in-place using openpyxl.
+    """
+
+    wb = load_workbook(io.BytesIO(file_bytes))
+    if sheet_name not in wb.sheetnames:
+        return file_bytes, 0
+
+    ws = wb[sheet_name]
+
+    header_norm_to_col: dict[str, int] = {}
+    for cell in ws[header_row]:
+        if cell.value is None:
+            continue
+        key = str(cell.value).strip().upper()
+        if key:
+            header_norm_to_col.setdefault(key, cell.column)
+
+    advisor_key = str(advisor_code_header).strip().upper()
+    class_key = str(classification_header).strip().upper()
+    if advisor_key not in header_norm_to_col or class_key not in header_norm_to_col:
+        return file_bytes, 0
+
+    advisor_col_idx = header_norm_to_col[advisor_key]
+    class_col_idx = header_norm_to_col[class_key]
+
+    updated = 0
+    for r in range(header_row + 1, ws.max_row + 1):
+        code_val = ws.cell(row=r, column=advisor_col_idx).value
+        code_norm = normalize_advisor_code_value(code_val, target_code_len)
+        if not code_norm:
+            continue
+
+        new_cls = code_to_class.get(code_norm)
+        if not new_cls:
+            continue
+
+        cls_cell = ws.cell(row=r, column=class_col_idx)
+        current = cls_cell.value
+        current_norm = str(current).strip().upper() if current is not None else ""
+        if current_norm != new_cls:
+            cls_cell.value = new_cls
+            updated += 1
+
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue(), updated
+
+
 def build_period_columns(
     df: pd.DataFrame,
     date_col: Optional[str],
@@ -680,6 +825,21 @@ if "Unit" in all_cols and series_is_mostly_numeric(raw_df[class_guess]):
 advisor_col = st.selectbox(
     "Advisor name column", all_cols, index=all_cols.index(advisor_guess), key="advisor_col"
 )
+
+# Separate selector because the Google mapping is keyed by *Advisor Code* (not name).
+advisor_code_guess = advisor_col
+for c in all_cols:
+    cl = str(c).strip().lower()
+    if "advisor" in cl and "code" in cl:
+        advisor_code_guess = c
+        break
+advisor_code_col = st.selectbox(
+    "Advisor code column (used to fix Classification)",  # for the uploaded Dashboard sheet
+    all_cols,
+    index=all_cols.index(advisor_code_guess) if advisor_code_guess in all_cols else 0,
+    key="advisor_code_col",
+)
+
 class_col = st.selectbox(
     "Classification column (A/B/C/etc.)",
     all_cols,
@@ -802,6 +962,43 @@ with st.expander("Preview mapped columns"):
 df = raw_df.copy()
 df["Advisor"] = df[advisor_col].astype(str).str.strip()
 df["Classification"] = df[class_col].astype(str).str.strip().str.upper()
+
+corrected_dashboard_bytes: Optional[bytes] = None
+corrected_dashboard_file_name: Optional[str] = None
+
+apply_2026_fix = st.checkbox(
+    "Auto-fix Classification using 2026 Advisor Code mapping (Dashboard)",
+    value=True,
+    help="Matches Advisor Code in your Excel to the 2026 published Google Sheet and updates only matched Classification values (preserves formatting).",
+)
+
+if apply_2026_fix:
+    with st.spinner("Fetching 2026 Advisor Code → Classification mapping..."):
+        code_to_class, target_code_len = fetch_2026_advisor_code_to_classification()
+
+    if not code_to_class:
+        st.warning("Could not build 2026 Advisor Code mapping (no rows parsed).")
+    else:
+        mapped_codes = normalize_advisor_code_series(df[advisor_code_col], target_code_len)
+        mapped_cls = mapped_codes.map(code_to_class)
+        df["Classification"] = df["Classification"].where(mapped_cls.isna(), mapped_cls)
+
+        # Also correct the uploaded workbook (preserving formatting) for the requested download.
+        target_sheet_name = "Dashboard" if "Dashboard" in excel.sheet_names else sheet
+        primary_name, primary_bytes = file_payloads[0]
+        with st.spinner(f"Updating '{target_sheet_name}' sheet classifications in uploaded workbook..."):
+            corrected_dashboard_bytes, updated_count = correct_classifications_in_workbook(
+                primary_bytes,
+                sheet_name=target_sheet_name,
+                header_row=int(header_row),
+                advisor_code_header=advisor_code_col,
+                classification_header=class_col,
+                code_to_class=code_to_class,
+                target_code_len=target_code_len,
+            )
+        corrected_dashboard_file_name = f"corrected_{primary_name}"
+        st.caption(f"2026 mapping updated {updated_count} Dashboard row(s) in the corrected download.")
+
 df["AC"] = normalize_number(df[ac_col]) if ac_col else 0
 df["NSC"] = normalize_number(df[nsc_col]) if nsc_col else 0
 df["Lives"] = normalize_number(df[lives_col])
@@ -1196,6 +1393,13 @@ with download_col1:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 with download_col2:
+    if corrected_dashboard_bytes is not None and corrected_dashboard_file_name is not None:
+        st.download_button(
+            "Download corrected uploaded XLSX (Dashboard)",
+            data=corrected_dashboard_bytes,
+            file_name=corrected_dashboard_file_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
     st.download_button(
         "Download advisor details (CSV)",
         data=advisor_detail.to_csv(index=False).encode("utf-8"),
