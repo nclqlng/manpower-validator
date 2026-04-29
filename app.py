@@ -8,115 +8,337 @@ from pandas.errors import ParserError
 
 APP_CSS = """
     <style>
+        /* Sun Life of Canada Theme - Modern Refresh */
         :root {
-            --sl-yellow: #ffd100;
-            --sl-yellow-soft: #fff3b3;
-            --sl-blue: #003da5;
-            --sl-blue-dark: #002a73;
-            --sl-gray: #f7f9fc;
-            --sl-text: #1b1f24;
+            --sl-gold: #FFD100;
+            --sl-gold-light: #FFE873;
+            --sl-navy: #003DA5;
+            --sl-navy-dark: #002A73;
+            --sl-navy-soft: #E8F0FE;
+            --sl-slate: #1E293B;
+            --sl-gray-50: #F8FAFC;
+            --sl-gray-100: #F1F5F9;
+            --sl-gray-200: #E2E8F0;
+            --sl-gray-600: #475569;
+            --sl-white: #FFFFFF;
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.03);
+            --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03);
+            --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.05), 0 4px 6px -2px rgba(0,0,0,0.02);
+            --shadow-xl: 0 20px 25px -5px rgba(0,0,0,0.05), 0 8px 10px -6px rgba(0,0,0,0.02);
         }
 
+        /* Base styling */
+        html, body, .stApp {
+            font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            background: var(--sl-gray-50);
+        }
+
+        /* Main container background */
         .stApp {
-            background: linear-gradient(180deg, #fffef8 0%, #ffffff 220px);
-            color: var(--sl-text);
+            background: linear-gradient(135deg, var(--sl-gray-50) 0%, var(--sl-white) 100%);
         }
 
+        /* Sidebar - Sun Life Navy with gradient */
         div[data-testid="stSidebar"] {
-            background: linear-gradient(180deg, var(--sl-blue) 0%, var(--sl-blue-dark) 100%);
+            background: linear-gradient(180deg, var(--sl-navy) 0%, var(--sl-navy-dark) 100%);
+            border-right: none;
         }
-        div[data-testid="stSidebar"] * {
-            color: #ffffff !important;
+        
+        div[data-testid="stSidebar"] *:not(button) {
+            color: var(--sl-white) !important;
         }
-        div[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h1,
-        div[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h2,
-        div[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3 {
-            color: var(--sl-yellow) !important;
+        
+        div[data-testid="stSidebar"] .stMarkdown h1,
+        div[data-testid="stSidebar"] .stMarkdown h2,
+        div[data-testid="stSidebar"] .stMarkdown h3 {
+            color: var(--sl-gold) !important;
+        }
+        
+        div[data-testid="stSidebar"] .stSelectbox label,
+        div[data-testid="stSidebar"] .stMultiSelect label,
+        div[data-testid="stSidebar"] .stSlider label,
+        div[data-testid="stSidebar"] .stNumberInput label {
+            color: var(--sl-gray-200) !important;
+            font-weight: 500;
+        }
+        
+        div[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] {
+            background-color: rgba(255,255,255,0.1);
+            border-color: rgba(255,255,255,0.2);
         }
 
+        /* Hero Section - Modern Card */
         .sl-hero {
-            padding: 14px 18px;
-            border-radius: 14px;
-            border-left: 8px solid var(--sl-yellow);
-            background: linear-gradient(90deg, #ffffff 0%, #fffbe6 100%);
-            box-shadow: 0 4px 14px rgba(0, 61, 165, 0.12);
-            margin-bottom: 10px;
+            background: var(--sl-white);
+            border-radius: 24px;
+            padding: 24px 28px;
+            margin-bottom: 28px;
+            border: 1px solid var(--sl-gray-200);
+            box-shadow: var(--shadow-lg);
+            position: relative;
+            overflow: hidden;
+            transition: all 0.2s ease;
         }
+        
+        .sl-hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 6px;
+            height: 100%;
+            background: linear-gradient(135deg, var(--sl-gold) 0%, var(--sl-gold-light) 100%);
+        }
+        
         .sl-hero-title {
-            color: var(--sl-blue);
+            font-size: 1.75rem;
             font-weight: 700;
-            font-size: 1.2rem;
-            margin-bottom: 3px;
+            background: linear-gradient(135deg, var(--sl-navy) 0%, var(--sl-navy-dark) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+            letter-spacing: -0.3px;
         }
+        
         .sl-hero-sub {
-            color: #334155;
+            color: var(--sl-gray-600);
             font-size: 0.95rem;
+            line-height: 1.5;
         }
 
+        /* Modern Metric Cards */
         div[data-testid="stMetric"] {
-            background: #ffffff;
-            border: 1px solid #cfd8ea;
-            border-radius: 12px;
-            padding: 12px 14px;
-            box-shadow: 0 4px 12px rgba(0, 61, 165, 0.14);
+            background: var(--sl-white);
+            border: 1px solid var(--sl-gray-200);
+            border-radius: 20px;
+            padding: 16px 20px;
+            box-shadow: var(--shadow-md);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
+        
+        div[data-testid="stMetric"]:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+        }
+        
         div[data-testid="stMetricLabel"] {
-            color: var(--sl-blue-dark);
-            font-weight: 700;
-            font-size: 0.95rem;
+            color: var(--sl-navy);
+            font-weight: 600;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
+        
         div[data-testid="stMetricValue"] {
-            color: #0b132b;
+            color: var(--sl-slate);
             font-weight: 800;
             font-size: 2rem;
-            line-height: 1.2;
-            white-space: normal !important;
-            overflow: visible !important;
-            text-overflow: clip !important;
-            word-break: break-word;
         }
+        
         div[data-testid="stMetricDelta"] {
-            font-size: 0.9rem;
-            font-weight: 700;
+            font-size: 0.85rem;
+            font-weight: 600;
         }
 
+        /* Tabs - Sun Life Style */
         div[data-baseweb="tab-list"] {
-            background: var(--sl-gray);
-            border-radius: 10px;
-            padding: 6px;
+            background: var(--sl-gray-100);
+            border-radius: 60px;
+            padding: 4px;
+            gap: 4px;
         }
+        
+        button[role="tab"] {
+            border-radius: 60px !important;
+            padding: 8px 20px !important;
+            font-weight: 600 !important;
+            transition: all 0.2s ease;
+        }
+        
         button[role="tab"][aria-selected="true"] {
-            background: var(--sl-yellow) !important;
-            color: #111827 !important;
-            border-radius: 8px !important;
+            background: var(--sl-gold) !important;
+            color: var(--sl-navy-dark) !important;
+            box-shadow: var(--shadow-sm);
+        }
+        
+        button[role="tab"]:hover:not([aria-selected="true"]) {
+            background: var(--sl-gray-200) !important;
         }
 
+        /* Download Buttons */
         .stDownloadButton button {
-            background: var(--sl-blue);
-            color: #ffffff;
-            border: 1px solid var(--sl-blue);
-            border-radius: 8px;
+            background: linear-gradient(135deg, var(--sl-navy) 0%, var(--sl-navy-dark) 100%);
+            color: var(--sl-white);
+            border: none;
+            border-radius: 40px;
+            padding: 10px 24px;
+            font-weight: 600;
+            transition: all 0.2s ease;
         }
+        
         .stDownloadButton button:hover {
-            border-color: var(--sl-yellow);
-            box-shadow: 0 0 0 2px rgba(255, 209, 0, 0.25);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
+            border-color: var(--sl-gold);
         }
 
+        /* Section Headers */
         .sl-section {
-            margin-top: 0.8rem;
-            margin-bottom: 0.4rem;
-            border-left: 5px solid var(--sl-yellow);
-            padding-left: 10px;
+            margin: 24px 0 16px 0;
+            border-left: 4px solid var(--sl-gold);
+            padding: 16px 20px;
+            background: var(--sl-white);
+            border-radius: 16px;
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--sl-gray-200);
+            border-left-width: 4px;
         }
+        
         .sl-section-title {
-            color: var(--sl-blue-dark);
-            font-weight: 800;
-            font-size: 1.1rem;
-            margin-bottom: 2px;
+            color: var(--sl-navy);
+            font-weight: 700;
+            font-size: 1.2rem;
+            margin-bottom: 4px;
         }
+        
         .sl-section-sub {
-            color: #475569;
+            color: var(--sl-gray-600);
+            font-size: 0.85rem;
+        }
+
+        /* Expander styling */
+        .streamlit-expanderHeader {
+            background: var(--sl-gray-50);
+            border-radius: 12px;
+            font-weight: 600;
+            color: var(--sl-navy);
+        }
+
+        /* Dataframes and tables */
+        .stDataFrame {
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: var(--shadow-sm);
+        }
+        
+        .stDataFrame div[data-testid="stDataFrameResizable"] {
+            border-radius: 16px;
+            border: 1px solid var(--sl-gray-200);
+        }
+
+        /* Info/Warning/Success boxes */
+        .stAlert {
+            border-radius: 16px;
+            border-left-width: 4px;
+        }
+        
+        .stAlert div[data-testid="stMarkdownContainer"] {
             font-size: 0.9rem;
+        }
+
+        /* File uploader */
+        div[data-testid="stFileUploader"] {
+            background: var(--sl-gray-50);
+            border: 2px dashed var(--sl-gray-200);
+            border-radius: 20px;
+            padding: 20px;
+        }
+        
+        div[data-testid="stFileUploader"]:hover {
+            border-color: var(--sl-gold);
+            background: var(--sl-white);
+        }
+
+        /* Select boxes and inputs */
+        .stSelectbox div[data-baseweb="select"] {
+            border-radius: 12px;
+            border-color: var(--sl-gray-200);
+        }
+        
+        .stSelectbox div[data-baseweb="select"]:focus-within {
+            border-color: var(--sl-gold);
+            box-shadow: 0 0 0 2px rgba(255, 209, 0, 0.2);
+        }
+        
+        .stNumberInput input {
+            border-radius: 12px;
+            border-color: var(--sl-gray-200);
+        }
+        
+        .stTextInput input {
+            border-radius: 12px;
+            border-color: var(--sl-gray-200);
+        }
+
+        /* Chart containers */
+        .stChart {
+            background: var(--sl-white);
+            border-radius: 16px;
+            padding: 12px;
+            border: 1px solid var(--sl-gray-200);
+        }
+
+        /* Caption text */
+        .stCaption {
+            color: var(--sl-gray-600);
+            font-size: 0.8rem;
+        }
+
+        /* Code blocks */
+        .stCodeBlock {
+            border-radius: 12px;
+        }
+
+        /* Markdown headers */
+        h1, h2, h3, h4 {
+            color: var(--sl-navy);
+        }
+        
+        h3 {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: var(--sl-gray-100);
+            border-radius: 10px;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: var(--sl-gray-600);
+            border-radius: 10px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--sl-navy);
+        }
+
+        /* Button hover states */
+        .stButton button {
+            border-radius: 40px;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }
+        
+        .stButton button:hover {
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
+        }
+
+        /* Metric container adjustments */
+        div[data-testid="column"] {
+            gap: 1rem;
+        }
+        
+        .stMetric > div {
+            background: transparent !important;
         }
     </style>
 """
@@ -130,7 +352,7 @@ def render_hero() -> None:
     st.markdown(
         """
     <div class="sl-hero">
-        <div class="sl-hero-title">Manpower Validation System</div>
+        <div class="sl-hero-title">✨ Manpower Validation System</div>
         <div class="sl-hero-sub">
             Upload an Excel file and analyze production by advisor classification with
             AC, NSC, and Lives across monthly and quarterly views.
@@ -153,7 +375,7 @@ def render_section(title: str, subtitle: str) -> None:
     )
 
 
-st.set_page_config(page_title="Manpower Validation System", layout="wide")
+st.set_page_config(page_title="Manpower Validation System", layout="wide", page_icon="✨")
 apply_theme()
 render_hero()
 
@@ -255,15 +477,88 @@ def format_compact(value: float) -> str:
     return f"{value:,.2f}" if value % 1 else f"{value:,.0f}"
 
 
+def normalize_flag(series: pd.Series) -> pd.Series:
+    truthy = {"1", "y", "yes", "true", "completed", "done", "pass", "passed"}
+    return series.astype(str).str.strip().str.lower().isin(truthy)
+
+
+def evaluate_sunlife_validation(row: pd.Series) -> dict[str, object]:
+    cls = str(row.get("Classification", "")).strip().upper()
+    tenure_text = str(row.get("Tenure Raw", "")).strip().lower()
+    ac_nsc = float(row.get("AC+NSC", 0) or 0)
+    coding_q = int(row.get("Coding Quarter", 0) or 0)
+    jfw = bool(row.get("JFW Done", False))
+    start = bool(row.get("START Done", False))
+    pillars = bool(row.get("Pillars Done", False))
+    vul = bool(row.get("VUL Advance Done", False))
+    mandatory_training = bool(row.get("Mandatory Training Done", False))
+
+    is_rookie = ("year 0" in tenure_text) or ("rookie" in tenure_text) or ("external" in tenure_text)
+    is_external_mc = cls == "MC" and "external" in tenure_text
+    training_bundle_ok = jfw and start and pillars
+
+    requirement = "No mapped rule"
+    passed = False
+    reason = "Classification/tenure combination not mapped to a rule."
+
+    if is_external_mc:
+        requirement = "External MC: >=45K AC/NSC + JFW + START + 4 Pillars"
+        passed = ac_nsc >= 45_000 and training_bundle_ok
+        reason = "Meets requirement." if passed else "Needs AC/NSC >=45K and complete JFW/START/4 Pillars."
+    elif cls == "A":
+        threshold = 15_000 if coding_q == 4 else 45_000
+        requirement = f"Rookie A: >={threshold:,.0f} AC/NSC + JFW + START + 4 Pillars"
+        passed = ac_nsc >= threshold and training_bundle_ok
+        reason = "Meets requirement." if passed else "Needs AC/NSC threshold and complete JFW/START/4 Pillars."
+    elif cls == "B":
+        requirement = "Tenured B: >=90K AC/NSC + VUL Advance"
+        passed = ac_nsc >= 90_000 and vul
+        reason = "Meets requirement." if passed else "Needs AC/NSC >=90K and VUL Advance completion."
+    elif cls == "C":
+        requirement = "Tenured C: >=135K AC/NSC"
+        passed = ac_nsc >= 135_000
+        reason = "Meets requirement." if passed else "Needs AC/NSC >=135K."
+    elif cls in {"D", "E", "MC"}:
+        requirement = "Tenured D/E/MC: >=180K AC/NSC"
+        passed = ac_nsc >= 180_000
+        reason = "Meets requirement." if passed else "Needs AC/NSC >=180K."
+    elif cls == "F":
+        requirement = "F advisor: optional, counted as VMP if >=180K AC/NSC"
+        passed = ac_nsc >= 180_000
+        reason = "Counts as VMP via >=180K AC/NSC." if passed else "Below optional 180K VMP threshold."
+
+    vna = is_rookie and passed
+    rookie_vmp = is_rookie and (ac_nsc >= 90_000) and training_bundle_ok
+    sm_eligible = ac_nsc >= 180_000 and mandatory_training
+    vmp = passed or rookie_vmp
+
+    return {
+        "Validation Requirement": requirement,
+        "Validation Status": "Pass" if passed else "Fail",
+        "Validation Reason": reason,
+        "VNA Eligible": "Yes" if vna else "No",
+        "VMP Eligible": "Yes" if vmp else "No",
+        "SM Appointment Eligible": "Yes" if sm_eligible else "No",
+    }
+
+
 uploaded_files = st.file_uploader(
     "Upload Excel file(s)", type=["xlsx", "xlsm", "xls"], accept_multiple_files=True
 )
 
-if not uploaded_files:
-    st.info("Upload one or more files to start.")
+# Streamlit re-runs the script on every widget change. File uploads are usually
+# preserved by the widget, but storing bytes in session_state makes this
+# behavior explicit and avoids losing them on re-runs.
+if uploaded_files:
+    file_payloads = [(f.name, f.read()) for f in uploaded_files]
+    st.session_state["uploaded_file_payloads"] = file_payloads
+else:
+    file_payloads = st.session_state.get("uploaded_file_payloads")
+
+if not file_payloads:
+    st.info("📂 Upload one or more files to start.")
     st.stop()
 
-file_payloads = [(f.name, f.read()) for f in uploaded_files]
 excel = pd.ExcelFile(io.BytesIO(file_payloads[0][1]))
 preferred_sheets = ["Settled Apps - Details", "Submitted Apps - Details"]
 default_sheet_index = 0
@@ -336,10 +631,10 @@ if raw_df.empty:
     st.stop()
 
 st.caption(
-    f"Loaded {len(loaded_file_names)} file(s), {len(raw_df):,} rows. "
+    f"📊 Loaded {len(loaded_file_names)} file(s), {len(raw_df):,} rows. "
     f"Detected columns: {', '.join(raw_df.columns)}"
 )
-with st.expander("Loaded files summary", expanded=False):
+with st.expander("📁 Loaded files summary", expanded=False):
     file_summary = (
         raw_df.groupby("Source File", dropna=False)
         .size()
@@ -428,6 +723,50 @@ else:
     month_col = None
     year_col = None
 
+st.markdown("**Validation mapping (optional, for Sun Life standards)**")
+tenure_guess = guess_column(all_cols, ["tenure", "segment", "advisor tenure"])
+coding_guess = guess_column(all_cols, ["coding date", "coded date", "date coded", "process date"])
+jfw_guess = guess_column(all_cols, ["jfw"])
+start_guess = guess_column(all_cols, ["start"])
+pillars_guess = guess_column(all_cols, ["pillar", "4 pillars"])
+vul_guess = guess_column(all_cols, ["vul advance", "vul"])
+mandatory_guess = guess_column(all_cols, ["mandatory training", "mandatory"])
+
+tenure_pick = st.selectbox(
+    "Tenure/segment column", none_opt, index=none_opt.index(tenure_guess) if tenure_guess in none_opt else 0
+)
+coding_pick = st.selectbox(
+    "Coding date column",
+    none_opt,
+    index=none_opt.index(coding_guess) if coding_guess in none_opt else 0,
+    help="Used for Q4-coded Rookie A rule.",
+)
+jfw_pick = st.selectbox("JFW completed column", none_opt, index=none_opt.index(jfw_guess) if jfw_guess in none_opt else 0)
+start_pick = st.selectbox(
+    "START completed column", none_opt, index=none_opt.index(start_guess) if start_guess in none_opt else 0
+)
+pillars_pick = st.selectbox(
+    "4 Pillars completed column",
+    none_opt,
+    index=none_opt.index(pillars_guess) if pillars_guess in none_opt else 0,
+)
+vul_pick = st.selectbox(
+    "VUL Advance completed column", none_opt, index=none_opt.index(vul_guess) if vul_guess in none_opt else 0
+)
+mandatory_pick = st.selectbox(
+    "Mandatory training completed column",
+    none_opt,
+    index=none_opt.index(mandatory_guess) if mandatory_guess in none_opt else 0,
+)
+
+tenure_col = None if tenure_pick == "(none)" else tenure_pick
+coding_validation_col = None if coding_pick == "(none)" else coding_pick
+jfw_col = None if jfw_pick == "(none)" else jfw_pick
+start_col = None if start_pick == "(none)" else start_pick
+pillars_col = None if pillars_pick == "(none)" else pillars_pick
+vul_col = None if vul_pick == "(none)" else vul_pick
+mandatory_col = None if mandatory_pick == "(none)" else mandatory_pick
+
 required_mapping = [advisor_col, class_col, lives_col]
 optional_mapping = [c for c in [ac_col, nsc_col] if c]
 core_mapping = required_mapping + optional_mapping
@@ -448,10 +787,16 @@ with st.expander("Preview mapped columns"):
         preview_cols.append(ac_col)
     if nsc_col:
         preview_cols.append(nsc_col)
+    if tenure_col:
+        preview_cols.append(tenure_col)
+    if coding_validation_col:
+        preview_cols.append(coding_validation_col)
     if date_col:
         preview_cols.append(date_col)
     elif month_col and year_col:
         preview_cols.extend([month_col, year_col])
+    # Avoid duplicate columns in preview (e.g., Process Date chosen twice).
+    preview_cols = list(dict.fromkeys(preview_cols))
     st.dataframe(raw_df[preview_cols].head(10), use_container_width=True)
 
 df = raw_df.copy()
@@ -460,6 +805,19 @@ df["Classification"] = df[class_col].astype(str).str.strip().str.upper()
 df["AC"] = normalize_number(df[ac_col]) if ac_col else 0
 df["NSC"] = normalize_number(df[nsc_col]) if nsc_col else 0
 df["Lives"] = normalize_number(df[lives_col])
+df["Tenure Raw"] = df[tenure_col].astype(str).str.strip() if tenure_col else ""
+if coding_validation_col:
+    coding_dt = pd.to_datetime(df[coding_validation_col], errors="coerce")
+elif date_col:
+    coding_dt = pd.to_datetime(df[date_col], errors="coerce")
+else:
+    coding_dt = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
+df["Coding Quarter"] = coding_dt.dt.quarter.fillna(0).astype(int)
+df["JFW Done"] = normalize_flag(df[jfw_col]) if jfw_col else False
+df["START Done"] = normalize_flag(df[start_col]) if start_col else False
+df["Pillars Done"] = normalize_flag(df[pillars_col]) if pillars_col else False
+df["VUL Advance Done"] = normalize_flag(df[vul_col]) if vul_col else False
+df["Mandatory Training Done"] = normalize_flag(df[mandatory_col]) if mandatory_col else False
 if sheet != "Submitted Apps - Details" and (not ac_col or not nsc_col):
     st.info("AC/NSC not available in this sheet; missing values are treated as 0.")
 df = build_period_columns(df, date_col, month_col, year_col)
@@ -483,8 +841,8 @@ period_quarters = sort_period_labels(
     list({str(p) for p in df["Period Quarter"].fillna("Unknown")}), freq="Q"
 )
 
-st.sidebar.header("Dashboard Filters")
-with st.sidebar.expander("How to use this dashboard", expanded=False):
+st.sidebar.header("📊 Dashboard Filters")
+with st.sidebar.expander("ℹ️ How to use this dashboard", expanded=False):
     st.markdown(
         "- Upload one or more files with the same layout.\n"
         "- Pick the target detail sheet and map columns once.\n"
@@ -496,7 +854,7 @@ selected_months = st.sidebar.multiselect("Months", period_months, default=period
 selected_quarters = st.sidebar.multiselect("Quarters", period_quarters, default=period_quarters)
 top_n = st.sidebar.slider("Top advisors to show", min_value=5, max_value=30, value=10, step=1)
 ranking_metric = st.sidebar.selectbox("Advisor ranking metric", ["AC", "NSC", "Lives"], index=0)
-st.sidebar.header("Performance Targets")
+st.sidebar.header("🎯 Performance Targets")
 target_ac = st.sidebar.number_input("Target AC", min_value=0.0, value=0.0, step=1000.0)
 target_nsc = st.sidebar.number_input("Target NSC", min_value=0.0, value=0.0, step=1000.0)
 target_lives = st.sidebar.number_input("Target Lives", min_value=0.0, value=0.0, step=10.0)
@@ -543,7 +901,33 @@ advisor_detail = (
     .sort_values(["Period Month", "Classification", "Advisor"])
 )
 
-st.subheader("Story Dashboard")
+validation_base = filtered.copy()
+validation_base["AC+NSC"] = validation_base["AC"] + validation_base["NSC"]
+advisor_validation = (
+    validation_base.groupby(["Advisor", "Classification"], dropna=False)
+    .agg(
+        {
+            "Tenure Raw": "first",
+            "Coding Quarter": "max",
+            "AC": "sum",
+            "NSC": "sum",
+            "AC+NSC": "sum",
+            "Lives": "sum",
+            "JFW Done": "max",
+            "START Done": "max",
+            "Pillars Done": "max",
+            "VUL Advance Done": "max",
+            "Mandatory Training Done": "max",
+        }
+    )
+    .reset_index()
+)
+validation_cols = advisor_validation.apply(evaluate_sunlife_validation, axis=1, result_type="expand")
+advisor_validation = pd.concat([advisor_validation, validation_cols], axis=1).sort_values(
+    ["Validation Status", "AC+NSC", "Advisor"], ascending=[True, False, True]
+)
+
+render_section("Story Dashboard", "Executive summary, validation snapshot, drivers, trends, and details.")
 total_ac = filtered["AC"].sum()
 total_nsc = filtered["NSC"].sum()
 total_lives = filtered["Lives"].sum()
@@ -684,8 +1068,19 @@ if insight_lines:
     st.markdown("### Executive Insights")
     st.markdown("\n".join(insight_lines))
 
+validation_pass_count = int((advisor_validation["Validation Status"] == "Pass").sum())
+validation_total = len(advisor_validation)
+vna_count = int((advisor_validation["VNA Eligible"] == "Yes").sum())
+vmp_count = int((advisor_validation["VMP Eligible"] == "Yes").sum())
+sm_eligible_count = int((advisor_validation["SM Appointment Eligible"] == "Yes").sum())
+st.markdown(
+    f"### Validation Snapshot\n"
+    f"- Passed standards: **{validation_pass_count}/{validation_total}** advisors\n"
+    f"- VNA eligible: **{vna_count}** | VMP eligible: **{vmp_count}** | SM-appointment eligible: **{sm_eligible_count}**"
+)
+
 story_tab, drivers_tab, trends_tab, details_tab = st.tabs(
-    ["Story", "Drivers", "Trends", "Details"]
+    ["📖 Story", "🚀 Drivers", "📈 Trends", "🔍 Details"]
 )
 with story_tab:
     st.markdown("**Performance status vs target**")
@@ -739,8 +1134,8 @@ with trends_tab:
     st.area_chart(quarterly_kpi, height=280)
 
 with details_tab:
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["Monthly Summary", "Quarterly Summary", "Advisor Details", "Data Quality"]
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["Monthly Summary", "Quarterly Summary", "Advisor Details", "Validation Results", "Data Quality"]
     )
     with tab1:
         st.dataframe(monthly_summary, use_container_width=True)
@@ -749,6 +1144,8 @@ with details_tab:
     with tab3:
         st.dataframe(advisor_detail, use_container_width=True, height=420)
     with tab4:
+        st.dataframe(advisor_validation, use_container_width=True, height=420)
+    with tab5:
         quality_df = pd.DataFrame(
             [
                 {"Check": "Rows with unknown/invalid date", "Count": quality_invalid_dates},
@@ -784,11 +1181,12 @@ export_bytes = to_excel_bytes(
         "Monthly Summary": monthly_summary,
         "Quarterly Summary": quarterly_summary,
         "Advisor Details": advisor_detail,
+        "Validation Results": advisor_validation,
         "Filtered Raw Data": filtered,
     }
 )
 
-st.markdown("**Download**")
+st.markdown("**📥 Download**")
 download_col1, download_col2 = st.columns(2)
 with download_col1:
     st.download_button(
@@ -804,4 +1202,3 @@ with download_col2:
         file_name="advisor_details.csv",
         mime="text/csv",
     )
-
