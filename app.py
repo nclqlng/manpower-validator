@@ -1,6 +1,8 @@
 import io
 import socket
 from typing import Optional
+from pathlib import Path  # <-- ADD THIS LINE
+import textwrap
 
 import csv
 import math
@@ -17,360 +19,279 @@ try:
 except ImportError:
     msoffcrypto = None
 
+try:
+    import altair as alt  # type: ignore[import-not-found]
+except ImportError:
+    alt = None
 
-APP_CSS = """
-    <style>
-        /* Sun Life of Canada Theme - Modern Refresh */
-        :root {
-            --sl-gold: #FFD100;
-            --sl-gold-light: #FFE873;
-            --sl-navy: #003DA5;
-            --sl-navy-dark: #002A73;
-            --sl-navy-soft: #E8F0FE;
-            --sl-slate: #1E293B;
-            --sl-gray-50: #F8FAFC;
-            --sl-gray-100: #F1F5F9;
-            --sl-gray-200: #E2E8F0;
-            --sl-gray-600: #475569;
-            --sl-white: #FFFFFF;
-            --shadow-sm: 0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.03);
-            --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03);
-            --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.05), 0 4px 6px -2px rgba(0,0,0,0.02);
-            --shadow-xl: 0 20px 25px -5px rgba(0,0,0,0.05), 0 8px 10px -6px rgba(0,0,0,0.02);
-        }
 
-        /* Base styling */
-        html, body, .stApp {
-            font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-            background: var(--sl-gray-50);
-        }
+def _altair_enabled() -> bool:
+    return alt is not None
 
-        /* Main container background */
-        .stApp {
-            background: linear-gradient(135deg, var(--sl-gray-50) 0%, var(--sl-white) 100%);
-        }
 
-        /* Sidebar - Sun Life Navy with gradient */
-        div[data-testid="stSidebar"] {
-            background: linear-gradient(180deg, var(--sl-navy) 0%, var(--sl-navy-dark) 100%);
-            border-right: none;
-        }
-        
-        div[data-testid="stSidebar"] *:not(button) {
-            color: var(--sl-white) !important;
-        }
-        
-        div[data-testid="stSidebar"] .stMarkdown h1,
-        div[data-testid="stSidebar"] .stMarkdown h2,
-        div[data-testid="stSidebar"] .stMarkdown h3 {
-            color: var(--sl-gold) !important;
-        }
-        
-        div[data-testid="stSidebar"] .stSelectbox label,
-        div[data-testid="stSidebar"] .stMultiSelect label,
-        div[data-testid="stSidebar"] .stSlider label,
-        div[data-testid="stSidebar"] .stNumberInput label {
-            color: var(--sl-gray-200) !important;
-            font-weight: 500;
-        }
-        
-        div[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] {
-            background-color: rgba(255,255,255,0.1);
-            border-color: rgba(255,255,255,0.2);
-        }
+_ALTAIR_THEME_READY = False
 
-        /* Hero Section - Modern Card */
-        .sl-hero {
-            background: var(--sl-white);
-            border-radius: 24px;
-            padding: 24px 28px;
-            margin-bottom: 28px;
-            border: 1px solid var(--sl-gray-200);
-            box-shadow: var(--shadow-lg);
-            position: relative;
-            overflow: hidden;
-            transition: all 0.2s ease;
-        }
-        
-        .sl-hero::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 6px;
-            height: 100%;
-            background: linear-gradient(135deg, var(--sl-gold) 0%, var(--sl-gold-light) 100%);
-        }
-        
-        .sl-hero-title {
-            font-size: 1.75rem;
-            font-weight: 700;
-            background: linear-gradient(135deg, var(--sl-navy) 0%, var(--sl-navy-dark) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin-bottom: 8px;
-            letter-spacing: -0.3px;
-        }
-        
-        .sl-hero-sub {
-            color: var(--sl-gray-600);
-            font-size: 0.95rem;
-            line-height: 1.5;
-        }
 
-        /* Modern Metric Cards */
-        div[data-testid="stMetric"] {
-            background: var(--sl-white);
-            border: 1px solid var(--sl-gray-200);
-            border-radius: 20px;
-            padding: 16px 20px;
-            box-shadow: var(--shadow-md);
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-        
-        div[data-testid="stMetric"]:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-lg);
-        }
-        
-        div[data-testid="stMetricLabel"] {
-            color: var(--sl-navy);
-            font-weight: 600;
-            font-size: 0.8rem;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        div[data-testid="stMetricValue"] {
-            color: var(--sl-slate);
-            font-weight: 800;
-            font-size: 2rem;
-        }
-        
-        div[data-testid="stMetricDelta"] {
-            font-size: 0.85rem;
-            font-weight: 600;
-        }
+def _altair_theme() -> None:
+    global _ALTAIR_THEME_READY
+    if not _altair_enabled():
+        return
+    if _ALTAIR_THEME_READY:
+        return
 
-        /* Tabs - Sun Life Style */
-        div[data-baseweb="tab-list"] {
-            background: var(--sl-gray-100);
-            border-radius: 60px;
-            padding: 4px;
-            gap: 4px;
-        }
-        
-        button[role="tab"] {
-            border-radius: 60px !important;
-            padding: 8px 20px !important;
-            font-weight: 600 !important;
-            transition: all 0.2s ease;
-        }
-        
-        button[role="tab"][aria-selected="true"] {
-            background: var(--sl-gold) !important;
-            color: var(--sl-navy-dark) !important;
-            box-shadow: var(--shadow-sm);
-        }
-        
-        button[role="tab"]:hover:not([aria-selected="true"]) {
-            background: var(--sl-gray-200) !important;
-        }
+    # Use the requested Sun Life palette (from CSS tokens):
+    # --sunlife-gold, --sunlife-gold-light, --sunlife-navy-dark,
+    # --sunlife-orange, --sunlife-teal, --sunlife-success, --sunlife-warning
+    palette = [
+        "#f5b400",  # sunlife gold
+        "#2d4a7c",  # sunlife navy light (replaces 2nd yellow for contrast)
+        "#0f1f38",  # sunlife navy dark
+        "#f97316",  # sunlife orange
+        "#2dd4bf",  # sunlife teal
+        "#22c55e",  # sunlife success
+        "#f59e0b",  # sunlife warning
+        "#ef4444",  # error (still useful for negative/alerts)
+    ]
 
-        /* Download Buttons */
-        .stDownloadButton button {
-            background: linear-gradient(135deg, var(--sl-navy) 0%, var(--sl-navy-dark) 100%);
-            color: var(--sl-white);
-            border: none;
-            border-radius: 40px;
-            padding: 10px 24px;
-            font-weight: 600;
-            transition: all 0.2s ease;
-        }
-        
-        .stDownloadButton button:hover {
-            transform: translateY(-1px);
-            box-shadow: var(--shadow-md);
-            border-color: var(--sl-gold);
-        }
+    # Keep charts clean and "product" looking (lighter grid, rounded feel).
+    alt.themes.register(
+        "sl_modern",
+        lambda: {
+            "config": {
+                "background": "transparent",
+                "view": {"stroke": "transparent"},
+                "range": {"category": palette},
+                "axis": {
+                    "labelColor": "#475569",
+                    "titleColor": "#0F172A",
+                    "gridColor": "rgba(15, 23, 42, 0.08)",
+                    "domainColor": "rgba(15, 23, 42, 0.18)",
+                    "tickColor": "rgba(15, 23, 42, 0.12)",
+                    "labelFontSize": 11,
+                    "titleFontSize": 12,
+                    "labelAngle": 0,
+                },
+                "axisX": {
+                    "labelAngle": 0,
+                    "labelOverlap": True,
+                    "labelPadding": 10,
+                },
+                "legend": {
+                    "labelColor": "#334155",
+                    "titleColor": "#0F172A",
+                    "labelFontSize": 11,
+                    "titleFontSize": 12,
+                    "symbolType": "circle",
+                    "symbolSize": 110,
+                    "orient": "bottom",
+                },
+            }
+        },
+    )
+    alt.themes.enable("sl_modern")
+    _ALTAIR_THEME_READY = True
 
-        /* Section Headers */
-        .sl-section {
-            margin: 24px 0 16px 0;
-            border-left: 4px solid var(--sl-gold);
-            padding: 16px 20px;
-            background: var(--sl-white);
-            border-radius: 16px;
-            box-shadow: var(--shadow-sm);
-            border: 1px solid var(--sl-gray-200);
-            border-left-width: 4px;
-        }
-        
-        .sl-section-title {
-            color: var(--sl-navy);
-            font-weight: 700;
-            font-size: 1.2rem;
-            margin-bottom: 4px;
-        }
-        
-        .sl-section-sub {
-            color: var(--sl-gray-600);
-            font-size: 0.85rem;
-        }
 
-        /* Expander styling */
-        .streamlit-expanderHeader {
-            background: var(--sl-gray-50);
-            border-radius: 12px;
-            font-weight: 600;
-            color: var(--sl-navy);
-        }
+def _format_kpi_long(monthly_kpi: pd.DataFrame) -> pd.DataFrame:
+    # Period Month + AC/NSC/Lives -> long form for Altair
+    out = monthly_kpi.copy()
+    out["Period Month"] = out["Period Month"].astype(str)
+    long_df = out.melt(
+        id_vars=["Period Month"],
+        value_vars=["AC", "NSC", "Lives"],
+        var_name="Metric",
+        value_name="Value",
+    )
+    return long_df
 
-        /* Dataframes and tables */
-        .stDataFrame {
-            border-radius: 16px;
-            overflow: hidden;
-            box-shadow: var(--shadow-sm);
-        }
-        
-        .stDataFrame div[data-testid="stDataFrameResizable"] {
-            border-radius: 16px;
-            border: 1px solid var(--sl-gray-200);
-        }
 
-        /* Info/Warning/Success boxes */
-        .stAlert {
-            border-radius: 16px;
-            border-left-width: 4px;
-        }
-        
-        .stAlert div[data-testid="stMarkdownContainer"] {
-            font-size: 0.9rem;
-        }
+def _render_monthly_momentum_chart(monthly_kpi: pd.DataFrame) -> None:
+    if not _altair_enabled() or monthly_kpi.empty:
+        st.line_chart(monthly_kpi.set_index("Period Month")[["AC", "NSC", "Lives"]], height=320)
+        return
 
-        /* File uploader */
-        div[data-testid="stFileUploader"] {
-            background: var(--sl-gray-50);
-            border: 2px dashed var(--sl-gray-200);
-            border-radius: 20px;
-            padding: 20px;
-        }
-        
-        div[data-testid="stFileUploader"]:hover {
-            border-color: var(--sl-gold);
-            background: var(--sl-white);
-        }
+    _altair_theme()
+    long_df = _format_kpi_long(monthly_kpi)
 
-        /* Select boxes and inputs */
-        .stSelectbox div[data-baseweb="select"] {
-            border-radius: 12px;
-            border-color: var(--sl-gray-200);
-        }
-        
-        .stSelectbox div[data-baseweb="select"]:focus-within {
-            border-color: var(--sl-gold);
-            box-shadow: 0 0 0 2px rgba(255, 209, 0, 0.2);
-        }
-        
-        .stNumberInput input {
-            border-radius: 12px;
-            border-color: var(--sl-gray-200);
-        }
-        
-        .stTextInput input {
-            border-radius: 12px;
-            border-color: var(--sl-gray-200);
-        }
+    # Keep Unknown last (if present) by pushing it to a high sort key.
+    months = [m for m in monthly_kpi["Period Month"].astype(str).tolist() if m != "Unknown"]
+    sort_order = months + (["Unknown"] if "Unknown" in set(long_df["Period Month"]) else [])
 
-        /* Chart containers */
-        .stChart {
-            background: var(--sl-white);
-            border-radius: 16px;
-            padding: 12px;
-            border: 1px solid var(--sl-gray-200);
-        }
+    base = (
+        alt.Chart(long_df)
+        .encode(
+            x=alt.X("Period Month:N", sort=sort_order, title=None, axis=alt.Axis(labelAngle=0)),
+            y=alt.Y("Value:Q", title=None),
+            color=alt.Color("Metric:N", title=None),
+            tooltip=[
+                alt.Tooltip("Period Month:N", title="Month"),
+                alt.Tooltip("Metric:N"),
+                alt.Tooltip("Value:Q", format=",.2f"),
+            ],
+        )
+        .properties(height=320)
+    )
 
-        /* Caption text */
-        .stCaption {
-            color: var(--sl-gray-600);
-            font-size: 0.8rem;
-        }
+    lines = base.mark_line(strokeWidth=3, opacity=0.9)
+    points = base.mark_point(size=70, filled=True, opacity=0.95)
 
-        /* Code blocks */
-        .stCodeBlock {
-            border-radius: 12px;
-        }
+    st.altair_chart((lines + points).interactive(), use_container_width=True)
 
-        /* Markdown headers */
-        h1, h2, h3, h4 {
-            color: var(--sl-navy);
-        }
-        
-        h3 {
-            font-size: 1.25rem;
-            font-weight: 600;
-        }
 
-        /* Scrollbar styling */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-        
-        ::-webkit-scrollbar-track {
-            background: var(--sl-gray-100);
-            border-radius: 10px;
-        }
-        
-        ::-webkit-scrollbar-thumb {
-            background: var(--sl-gray-600);
-            border-radius: 10px;
-        }
-        
-        ::-webkit-scrollbar-thumb:hover {
-            background: var(--sl-navy);
-        }
+def _render_classification_composition_chart(classification_summary: pd.DataFrame) -> None:
+    if not _altair_enabled() or classification_summary.empty:
+        st.bar_chart(
+            classification_summary.set_index("Classification")[["AC", "NSC", "Lives"]],
+            height=330,
+        )
+        return
 
-        /* Button hover states */
-        .stButton button {
-            border-radius: 40px;
-            font-weight: 600;
-            transition: all 0.2s ease;
-        }
-        
-        .stButton button:hover {
-            transform: translateY(-1px);
-            box-shadow: var(--shadow-md);
-        }
+    _altair_theme()
+    long_df = classification_summary.melt(
+        id_vars=["Classification"], value_vars=["AC", "NSC", "Lives"], var_name="Metric", value_name="Value"
+    )
 
-        /* Metric container adjustments */
-        div[data-testid="column"] {
-            gap: 1rem;
-        }
-        
-        .stMetric > div {
-            background: transparent !important;
-        }
-    </style>
-"""
+    chart = (
+        alt.Chart(long_df)
+        .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
+        .encode(
+            x=alt.X("Classification:N", title=None),
+            y=alt.Y("Value:Q", title=None),
+            xOffset=alt.XOffset("Metric:N"),
+            color=alt.Color("Metric:N", title=None),
+            tooltip=[
+                alt.Tooltip("Classification:N"),
+                alt.Tooltip("Metric:N"),
+                alt.Tooltip("Value:Q", format=",.2f"),
+            ],
+        )
+        .properties(height=330)
+    )
+
+    st.altair_chart(chart, use_container_width=True)
+
+
+def _render_top_advisors_chart(top_advisors: pd.DataFrame, ranking_metric: str) -> None:
+    if not _altair_enabled() or top_advisors.empty:
+        st.bar_chart(top_advisors.set_index("Advisor")[["AC", "NSC", "Lives"]], height=330)
+        return
+
+    _altair_theme()
+    metric = ranking_metric
+    df = top_advisors.copy()
+    df["Advisor"] = df["Advisor"].astype(str)
+
+    chart = (
+        alt.Chart(df)
+        .mark_bar(cornerRadiusTopLeft=7, cornerRadiusTopRight=7)
+        .encode(
+            y=alt.Y("Advisor:N", sort="-x", title=None),
+            x=alt.X(f"{metric}:Q", title=None),
+            color=alt.value("#1A5A8A"),
+            tooltip=[
+                alt.Tooltip("Advisor:N"),
+                alt.Tooltip("AC:Q", format=",.2f"),
+                alt.Tooltip("NSC:Q", format=",.2f"),
+                alt.Tooltip("Lives:Q", format=",.0f"),
+            ],
+        )
+        .properties(height=330)
+    )
+
+    st.altair_chart(chart, use_container_width=True)
+
+
+def _render_monthly_ac_by_classification(monthly_summary: pd.DataFrame, ordered_months: list[str]) -> None:
+    if not _altair_enabled() or monthly_summary.empty:
+        pivot = (
+            monthly_summary.pivot(index="Period Month", columns="Classification", values="AC")
+            .fillna(0)
+            .reindex([m for m in ordered_months if m in set(monthly_summary["Period Month"])])
+        )
+        st.bar_chart(pivot, height=320)
+        return
+
+    _altair_theme()
+    df = monthly_summary.copy()
+    df["Period Month"] = df["Period Month"].astype(str)
+
+    chart = (
+        alt.Chart(df)
+        .mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5)
+        .encode(
+            x=alt.X("Period Month:N", sort=ordered_months, title=None, axis=alt.Axis(labelAngle=0)),
+            y=alt.Y("AC:Q", title=None, stack=True),
+            color=alt.Color("Classification:N", title=None),
+            tooltip=[
+                alt.Tooltip("Period Month:N", title="Month"),
+                alt.Tooltip("Classification:N"),
+                alt.Tooltip("AC:Q", format=",.2f"),
+            ],
+        )
+        .properties(height=320)
+    )
+
+    st.altair_chart(chart, use_container_width=True)
+
 
 
 def apply_theme() -> None:
-    st.markdown(APP_CSS, unsafe_allow_html=True)
-
+    """Load and apply CSS theme from external file"""
+    css_path = Path(__file__).parent / "app_styles.css"
+    if css_path.exists():
+        css_text = css_path.read_text(encoding="utf-8")
+        st.markdown(f"<style>{css_text}</style>", unsafe_allow_html=True)
 
 def render_hero() -> None:
     st.markdown(
-        """
-    <div class="sl-hero">
-        <div class="sl-hero-title">✨ Manpower Validation System</div>
-        <div class="sl-hero-sub">
-            Upload an Excel file and analyze production by advisor classification with
-            AC, NSC, and Lives across monthly and quarterly views.
-        </div>
-    </div>
-    """,
+        textwrap.dedent(
+            """
+            <div class="sl-hero">
+              <div class="sl-hero-top">
+                <div class="sl-hero-badge">Sun Life • Manpower Analytics</div>
+                <div class="sl-hero-actions">
+                  <span class="sl-pill">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+                    Upload
+                  </span>
+                  <span class="sl-pill">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M7 6v14"/><path d="M3 10h4"/><path d="M3 14h4"/><path d="M3 18h4"/></svg>
+                    Map
+                  </span>
+                  <span class="sl-pill">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><path d="m7 14 3-3 3 2 5-6"/></svg>
+                    Analyze
+                  </span>
+                  <span class="sl-pill sl-pill-ghost">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14v7"/><path d="M8 17l4 4 4-4"/><path d="M20 13a4 4 0 0 0-3-3.87"/><path d="M4 13a4 4 0 0 1 3-3.87"/><path d="M7 9a5 5 0 0 1 10 0"/></svg>
+                    Export
+                  </span>
+                </div>
+              </div>
+
+              <div class="sl-hero-title">Manpower Validation</div>
+              <div class="sl-hero-sub">
+                Turn monthly &amp; quarterly production data into a clean story: performance,
+                validation status, drivers, trends, and export-ready reports.
+              </div>
+
+              <div class="sl-hero-meta">
+                <div class="sl-hero-meta-item">
+                  <div class="sl-hero-meta-k">Best for</div>
+                  <div class="sl-hero-meta-v">Dashboard / Settled / Submitted sheets</div>
+                </div>
+                <div class="sl-hero-meta-item">
+                  <div class="sl-hero-meta-k">Output</div>
+                  <div class="sl-hero-meta-v">Excel report + corrected Dashboard (XLSX)</div>
+                </div>
+                <div class="sl-hero-meta-item">
+                  <div class="sl-hero-meta-k">Includes</div>
+                  <div class="sl-hero-meta-v">AC / NSC / Lives + Validation snapshot</div>
+                </div>
+              </div>
+            </div>
+            """
+        ),
         unsafe_allow_html=True,
     )
 
@@ -387,7 +308,7 @@ def render_section(title: str, subtitle: str) -> None:
     )
 
 
-st.set_page_config(page_title="Manpower Validation System", layout="wide", page_icon="✨")
+st.set_page_config(page_title="Manpower Validation System", layout="wide")
 apply_theme()
 render_hero()
 
@@ -1021,10 +942,10 @@ if raw_df.empty:
     st.stop()
 
 st.caption(
-    f"📊 Loaded {len(loaded_file_names)} file(s), {len(raw_df):,} rows. "
+    f"Loaded {len(loaded_file_names)} file(s), {len(raw_df):,} rows. "
     f"Detected columns: {', '.join(raw_df.columns)}"
 )
-with st.expander("📁 Loaded files summary", expanded=False):
+with st.expander("Loaded files summary", expanded=False):
     file_summary = (
         raw_df.groupby("Source File", dropna=False)
         .size()
@@ -1295,8 +1216,8 @@ period_quarters = sort_period_labels(
     list({str(p) for p in df["Period Quarter"].fillna("Unknown")}), freq="Q"
 )
 
-st.sidebar.header("📊 Dashboard Filters")
-with st.sidebar.expander("ℹ️ How to use this dashboard", expanded=False):
+st.sidebar.header("Dashboard Filters")
+with st.sidebar.expander("How to use this dashboard", expanded=False):
     st.markdown(
         "- Upload one or more files with the same layout.\n"
         "- Pick the target detail sheet and map columns once.\n"
@@ -1617,9 +1538,7 @@ st.markdown(
     f"- VNA eligible: **{vna_count}** | VMP eligible: **{vmp_count}** | SM-appointment eligible: **{sm_eligible_count}**"
 )
 
-story_tab, drivers_tab, trends_tab, details_tab = st.tabs(
-    ["📖 Story", "🚀 Drivers", "📈 Trends", "🔍 Details"]
-)
+story_tab, drivers_tab, trends_tab, details_tab = st.tabs(["Story", "Drivers", "Trends", "Details"])
 with story_tab:
     st.markdown("**Performance status vs target**")
     st.caption(
@@ -1630,13 +1549,10 @@ with story_tab:
     st.markdown("**Performance composition by classification**")
     comp_col1, comp_col2 = st.columns(2)
     with comp_col1:
-        st.bar_chart(
-            classification_summary.set_index("Classification")[["AC", "NSC", "Lives"]],
-            height=330,
-        )
+        _render_classification_composition_chart(classification_summary)
     with comp_col2:
         st.markdown(f"**Top {top_n} advisors by {ranking_metric}**")
-        st.bar_chart(top_advisors.set_index("Advisor")[["AC", "NSC", "Lives"]], height=330)
+        _render_top_advisors_chart(top_advisors, ranking_metric=ranking_metric)
 
 with drivers_tab:
     st.markdown("**Who drives production?**")
@@ -1661,15 +1577,39 @@ with trends_tab:
     trend_col1, trend_col2 = st.columns(2)
     with trend_col1:
         st.markdown("**Monthly momentum (AC / NSC / Lives)**")
-        st.line_chart(monthly_kpi.set_index("Period Month")[["AC", "NSC", "Lives"]], height=320)
+        _render_monthly_momentum_chart(monthly_kpi)
     with trend_col2:
         st.markdown("**Monthly AC by classification**")
-        st.bar_chart(classification_ac_chart, height=320)
+        _render_monthly_ac_by_classification(monthly_summary, ordered_months=period_months)
     st.markdown("**Quarterly AC trend by classification**")
     quarterly_kpi = quarterly_summary.pivot(
         index="Period Quarter", columns="Classification", values="AC"
     ).fillna(0)
-    st.area_chart(quarterly_kpi, height=280)
+    if _altair_enabled() and not quarterly_summary.empty:
+        _altair_theme()
+        qdf = quarterly_summary.copy()
+        qdf["Period Quarter"] = qdf["Period Quarter"].astype(str)
+        q_order = sort_period_labels(
+            list({str(p) for p in qdf["Period Quarter"].fillna("Unknown")}), freq="Q"
+        )
+        q_chart = (
+            alt.Chart(qdf)
+            .mark_area(opacity=0.55, interpolate="monotone")
+            .encode(
+                x=alt.X("Period Quarter:N", sort=q_order, title=None, axis=alt.Axis(labelAngle=0)),
+                y=alt.Y("AC:Q", stack=True, title=None),
+                color=alt.Color("Classification:N", title=None),
+                tooltip=[
+                    alt.Tooltip("Period Quarter:N", title="Quarter"),
+                    alt.Tooltip("Classification:N"),
+                    alt.Tooltip("AC:Q", format=",.2f"),
+                ],
+            )
+            .properties(height=280)
+        )
+        st.altair_chart(q_chart, use_container_width=True)
+    else:
+        st.area_chart(quarterly_kpi, height=280)
 
 with details_tab:
     tab1, tab2, tab3, tab4, tab5 = st.tabs(
@@ -1724,7 +1664,7 @@ export_bytes = to_excel_bytes(
     }
 )
 
-st.markdown("**📥 Download**")
+st.markdown("**Download**")
 download_col1, download_col2 = st.columns(2)
 with download_col1:
     st.download_button(
