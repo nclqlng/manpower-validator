@@ -18,7 +18,7 @@
     --sunlife-error: #ef4444;
 
     /* App tokens */
-    --background: #f5f7fa;
+    --background: #ffffff;
     --card-bg: #ffffff;
     --text-primary: #1a365d;
     --text-secondary: #64748b;
@@ -36,11 +36,11 @@
 html, body, .stApp {
     font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Arial, sans-serif;
     color: var(--text-primary);
-    background: var(--background);
+    background: #ffffff;
 }
 
 .stApp {
-    background: transparent;
+    background: #ffffff;
 }
 
 header[data-testid="stHeader"],
@@ -50,15 +50,15 @@ footer,
 }
 
 .block-container {
-    padding-top: 1.25rem !important;
-    padding-bottom: 2.5rem !important;
+    padding-top: 1.1rem !important;
+    padding-bottom: 2.8rem !important;
     max-width: 1300px;
 }
 
 /* Sidebar */
 div[data-testid="stSidebar"] {
-    background: var(--brand-teal);
-    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    background: linear-gradient(180deg, #0f1f38 0%, #12284a 55%, #18345f 100%);
+    border-right: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 div[data-testid="stSidebar"] *:not(button):not(input):not(textarea) {
@@ -70,9 +70,10 @@ div[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"],
 div[data-testid="stSidebar"] .stMultiSelect div[data-baseweb="select"],
 div[data-testid="stSidebar"] .stTextInput input,
 div[data-testid="stSidebar"] .stNumberInput input {
-    background: rgba(255, 255, 255, 0.08) !important;
-    border: 1px solid rgba(255, 255, 255, 0.16) !important;
+    background: rgba(255, 255, 255, 0.10) !important;
+    border: 1px solid rgba(255, 255, 255, 0.26) !important;
     color: rgba(255, 255, 255, 0.92) !important;
+    border-radius: 12px !important;
 }
 
 div[data-testid="stSidebar"] .stTextInput input::placeholder {
@@ -83,31 +84,156 @@ div[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"]:focus-withi
 div[data-testid="stSidebar"] .stMultiSelect div[data-baseweb="select"]:focus-within,
 div[data-testid="stSidebar"] .stTextInput input:focus,
 div[data-testid="stSidebar"] .stNumberInput input:focus {
-    border-color: rgba(236, 171, 35, 0.78) !important;
-    box-shadow: 0 0 0 4px rgba(236, 171, 35, 0.18) !important;
+    border-color: rgba(255, 201, 51, 0.85) !important;
+    box-shadow: 0 0 0 4px rgba(255, 201, 51, 0.18) !important;
 }
 
 /* Multi-select chips */
-div[data-testid="stSidebar"] span[data-baseweb="tag"] {
-    background: rgba(236, 171, 35, 0.18) !important;
-    border: 1px solid rgba(236, 171, 35, 0.24) !important;
+div[data-testid="stSidebar"] [data-baseweb="tag"] {
+    background: rgba(255, 201, 51, 0.18) !important;
+    background-color: rgba(255, 201, 51, 0.18) !important;
+    border: 1px solid rgba(255, 201, 51, 0.36) !important;
+    border-color: rgba(255, 201, 51, 0.36) !important;
     color: rgba(255, 255, 255, 0.92) !important;
+    display: inline-flex !important;
+    width: auto !important;
+    max-width: max-content !important;
+    margin: 3px 4px 3px 0 !important;
+    min-height: 30px !important;
+    border-radius: 10px !important;
+    box-shadow: none !important;
+}
+
+div[data-testid="stSidebar"] [data-baseweb="tag"] button,
+div[data-testid="stSidebar"] [data-baseweb="tag"] [role="button"] {
+    color: rgba(255, 255, 255, 0.92) !important;
+    background: transparent !important;
+    border: none !important;
+}
+
+div[data-testid="stSidebar"] [data-baseweb="tag"] button:hover,
+div[data-testid="stSidebar"] [data-baseweb="tag"] [role="button"]:hover {
+    color: #ffd566 !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+}
+
+div[data-testid="stSidebar"] [data-baseweb="tag"] svg,
+div[data-testid="stSidebar"] [data-baseweb="tag"] path {
+    color: rgba(255, 255, 255, 0.92) !important;
+    fill: currentColor !important;
+    stroke: currentColor !important;
+}
+
+/* Force override for BaseWeb tag variants that default to red */
+div[data-testid="stSidebar"] [data-baseweb="tag"][class*="css"],
+div[data-testid="stSidebar"] [data-baseweb="tag"] > span,
+div[data-testid="stSidebar"] [data-baseweb="tag"] > div {
+    background: rgba(255, 201, 51, 0.18) !important;
+    background-color: rgba(255, 201, 51, 0.18) !important;
+    border-color: rgba(255, 201, 51, 0.36) !important;
+    color: rgba(255, 255, 255, 0.92) !important;
+}
+
+/* Last-resort override for Streamlit/BaseWeb semantic status tags */
+div[data-testid="stSidebar"] [data-baseweb="tag"][data-kind],
+div[data-testid="stSidebar"] [data-baseweb="tag"][kind],
+div[data-testid="stSidebar"] [data-baseweb="tag"][class*="negative"],
+div[data-testid="stSidebar"] [data-baseweb="tag"][class*="danger"] {
+    background: rgba(255, 201, 51, 0.18) !important;
+    background-color: rgba(255, 201, 51, 0.18) !important;
+    border: 1px solid rgba(255, 201, 51, 0.36) !important;
+    color: #ffffff !important;
+}
+
+/* Keep selected months/quarters/classifications as row-wrap chips */
+div[data-testid="stSidebar"] .stMultiSelect div[data-baseweb="select"] > div {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 4px !important;
+    align-items: center !important;
+}
+
+div[data-testid="stSidebar"] .stMultiSelect div[data-baseweb="select"] {
+    align-items: flex-start !important;
+}
+
+div[data-testid="stSidebar"] [aria-label="Clear all"],
+div[data-testid="stSidebar"] svg {
+    color: rgba(255, 255, 255, 0.85) !important;
+    fill: currentColor;
+}
+
+div[data-testid="stSidebar"] .stMultiSelect [aria-label*="clear"],
+div[data-testid="stSidebar"] .stMultiSelect [aria-label*="remove"],
+div[data-testid="stSidebar"] .stMultiSelect [title*="clear"],
+div[data-testid="stSidebar"] .stMultiSelect [title*="remove"] {
+    color: rgba(255, 255, 255, 0.92) !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+    border-radius: 8px !important;
 }
 
 div[data-testid="stSidebar"] h1,
 div[data-testid="stSidebar"] h2,
 div[data-testid="stSidebar"] h3 {
-    color: var(--brand-gold) !important;
+    color: #ffd566 !important;
+}
+
+div[data-testid="stSidebar"] [data-testid="stExpander"] {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 14px;
+    margin-bottom: 10px;
+}
+
+div[data-testid="stSidebar"] .streamlit-expanderHeader {
+    background: transparent !important;
+    color: #ffd566 !important;
+    border: 0 !important;
+    font-weight: 700 !important;
+}
+
+div[data-testid="stSidebar"] label,
+div[data-testid="stSidebar"] .stSelectbox label,
+div[data-testid="stSidebar"] .stMultiSelect label,
+div[data-testid="stSidebar"] .stTextInput label,
+div[data-testid="stSidebar"] .stSlider label,
+div[data-testid="stSidebar"] .stNumberInput label {
+    color: #e8eefb !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.01em;
+}
+
+div[data-testid="stSidebar"] hr {
+    border-color: rgba(255, 255, 255, 0.16) !important;
+}
+
+.sl-sidebar-title {
+    color: #ffd566;
+    font-size: 1.05rem;
+    font-weight: 900;
+    letter-spacing: 0.01em;
+    margin: 0 0 10px 0;
+}
+
+.sl-sidebar-group-title {
+    color: #d7e6ff;
+    font-size: 0.82rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 14px 0 6px 0;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.16);
 }
 
 /* Hero Section */
 .sl-hero {
     background: var(--card-bg);
     border-radius: var(--radius-xl);
-    padding: 30px 34px;
+    padding: 28px 32px;
     margin-bottom: 28px;
     border: 1px solid var(--border-color);
-    box-shadow: var(--shadow);
+    box-shadow: 0 14px 34px rgba(15, 31, 56, 0.08);
     position: relative;
     overflow: hidden;
 }
@@ -117,10 +243,21 @@ div[data-testid="stSidebar"] h3 {
     position: absolute;
     top: 0;
     left: 0;
-    width: 9px;
+    width: 0;
     height: 100%;
-    background: var(--brand-gold);
+    background: transparent;
     border-radius: var(--radius-xl) 0 0 var(--radius-xl);
+}
+
+.sl-hero::after {
+    content: "";
+    position: absolute;
+    right: -140px;
+    top: -140px;
+    width: 320px;
+    height: 320px;
+    background: radial-gradient(circle, rgba(245, 180, 0, 0.12) 0%, rgba(245, 180, 0, 0) 62%);
+    pointer-events: none;
 }
 
 .sl-hero-top {
@@ -186,7 +323,7 @@ div[data-testid="stSidebar"] h3 {
 }
 
 .sl-hero-title {
-    font-size: 2.15rem;
+    font-size: 2.2rem;
     font-weight: 950;
     color: var(--brand-teal);
     margin: 6px 0 10px 0;
@@ -234,15 +371,15 @@ div[data-testid="stMetric"] {
     background: var(--card-bg);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
-    padding: 20px 24px;
-    box-shadow: var(--shadow-soft);
+    padding: 18px 20px;
+    box-shadow: 0 8px 18px rgba(15, 31, 56, 0.06);
     transition: all 0.2s ease;
 }
 
 div[data-testid="stMetric"]:hover {
-    transform: translateY(-4px);
-    box-shadow: var(--shadow);
-    border-color: rgba(236, 171, 35, 0.55);
+    transform: translateY(-3px);
+    box-shadow: 0 14px 28px rgba(15, 31, 56, 0.10);
+    border-color: rgba(45, 74, 124, 0.35);
 }
 
 div[data-testid="stMetricLabel"] {
@@ -262,20 +399,51 @@ div[data-testid="stMetricValue"] {
 }
 
 div[data-testid="stMetricDelta"] {
-    background: rgba(236, 171, 35, 0.16);
+    background: rgba(34, 197, 94, 0.16);
+    border: 1px solid rgba(34, 197, 94, 0.34);
     border-radius: 20px;
     padding: 4px 10px;
     font-size: 0.75rem;
-    font-weight: 600;
-    color: #8A5A00;
+    font-weight: 700;
+    color: var(--sunlife-success) !important;
+}
+
+div[data-testid="stMetricDelta"] svg,
+div[data-testid="stMetricDelta"] path {
+    color: var(--sunlife-success) !important;
+}
+
+/* Negative deltas (down arrow) */
+div[data-testid="stMetricDelta"]:has(svg[aria-label*="down"]),
+div[data-testid="stMetricDelta"]:has(svg[title*="down"]),
+div[data-testid="stMetricDelta"]:has(svg[data-icon="arrow-down"]),
+div[data-testid="stMetricDelta"]:has(svg[icon-name="arrow-down"]),
+div[data-testid="stMetricDelta"]:has([data-testid="stMetricDeltaIcon-Down"]) {
+    background: rgba(239, 68, 68, 0.14);
+    border: 1px solid rgba(239, 68, 68, 0.34);
+    color: var(--sunlife-error) !important;
+}
+
+div[data-testid="stMetricDelta"]:has(svg[aria-label*="down"]) svg,
+div[data-testid="stMetricDelta"]:has(svg[title*="down"]) svg,
+div[data-testid="stMetricDelta"]:has(svg[data-icon="arrow-down"]) svg,
+div[data-testid="stMetricDelta"]:has(svg[icon-name="arrow-down"]) svg,
+div[data-testid="stMetricDelta"]:has([data-testid="stMetricDeltaIcon-Down"]) svg,
+div[data-testid="stMetricDelta"]:has(svg[aria-label*="down"]) path,
+div[data-testid="stMetricDelta"]:has(svg[title*="down"]) path,
+div[data-testid="stMetricDelta"]:has(svg[data-icon="arrow-down"]) path,
+div[data-testid="stMetricDelta"]:has(svg[icon-name="arrow-down"]) path,
+div[data-testid="stMetricDelta"]:has([data-testid="stMetricDeltaIcon-Down"]) path {
+    color: var(--sunlife-error) !important;
 }
 
 /* Tabs */
 div[data-baseweb="tab-list"] {
-    background: #E2E8F0;
+    background: #eef2f7;
     border-radius: 16px;
-    padding: 4px;
+    padding: 5px;
     gap: 4px;
+    border: 1px solid #d9e2ec;
 }
 
 button[role="tab"] {
@@ -289,9 +457,9 @@ button[role="tab"] {
 }
 
 button[role="tab"][aria-selected="true"] {
-    background: var(--brand-gold) !important;
-    color: var(--brand-teal) !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    background: var(--sunlife-navy-light) !important;
+    color: #ffffff !important;
+    box-shadow: 0 3px 10px rgba(15, 31, 56, 0.22);
 }
 
 button[role="tab"]:hover:not([aria-selected="true"]) {
@@ -302,9 +470,9 @@ button[role="tab"]:hover:not([aria-selected="true"]) {
 /* Buttons */
 .stButton button,
 .stDownloadButton button {
-    background: var(--brand-teal);
+    background: var(--sunlife-navy-light);
     color: rgba(255, 255, 255, 0.94);
-    border: 1px solid rgba(14, 56, 70, 0.22);
+    border: 1px solid rgba(45, 74, 124, 0.35);
     border-radius: 999px;
     padding: 11px 18px;
     font-weight: 750;
@@ -327,10 +495,10 @@ button[role="tab"]:hover:not([aria-selected="true"]) {
 
 .stButton button:hover,
 .stDownloadButton button:hover {
-    background: #114759;
+    background: var(--sunlife-navy);
     transform: translateY(-2px);
     box-shadow: 0 16px 34px rgba(2, 6, 23, 0.22), 0 10px 26px rgba(236, 171, 35, 0.18);
-    border-color: rgba(236, 171, 35, 0.40);
+    border-color: rgba(45, 74, 124, 0.7);
 }
 
 .stButton button:active,
@@ -349,14 +517,14 @@ button[role="tab"]:hover:not([aria-selected="true"]) {
 
 /* Make "Download" buttons pop a bit more */
 .stDownloadButton button {
-    background: var(--brand-gold);
-    color: #0B1220;
-    border-color: rgba(236, 171, 35, 0.55);
+    background: var(--sunlife-navy-light);
+    color: rgba(255, 255, 255, 0.94);
+    border-color: rgba(45, 74, 124, 0.35);
 }
 
 .stDownloadButton button:hover {
-    background: #f2b737;
-    border-color: rgba(236, 171, 35, 0.80);
+    background: var(--sunlife-navy);
+    border-color: rgba(45, 74, 124, 0.7);
 }
 
 /* Section Headers */
@@ -366,7 +534,7 @@ button[role="tab"]:hover:not([aria-selected="true"]) {
     border-radius: var(--radius-lg);
     padding: 16px 18px;
     border: 1px solid var(--border-color);
-    box-shadow: var(--shadow-soft);
+    box-shadow: 0 10px 22px rgba(15, 31, 56, 0.06);
     position: relative;
     overflow: hidden;
 }
@@ -375,7 +543,7 @@ button[role="tab"]:hover:not([aria-selected="true"]) {
     content: "";
     position: absolute;
     inset: 0;
-    background: rgba(236, 171, 35, 0.10);
+    background: linear-gradient(90deg, rgba(245, 180, 0, 0.12) 0%, rgba(245, 180, 0, 0.00) 35%);
     pointer-events: none;
 }
 
@@ -434,6 +602,199 @@ div[data-testid="stFileUploader"]:hover {
     padding: 16px;
     border: 1px solid var(--border-color);
     box-shadow: var(--shadow-soft);
+}
+
+div[data-testid="stVegaLiteChart"],
+div[data-testid="stPlotlyChart"],
+div[data-testid="stLineChart"],
+div[data-testid="stAreaChart"],
+div[data-testid="stBarChart"] {
+    background: #ffffff !important;
+    border-radius: 12px;
+    border: 1px solid #edf2f7;
+}
+
+.sl-chart-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-soft);
+    padding: 14px;
+    margin-bottom: 14px;
+}
+
+.sl-chart-title {
+    color: var(--sunlife-navy-dark);
+    font-weight: 800;
+    font-size: 0.9rem;
+    margin: 0 0 8px 0;
+    letter-spacing: 0.01em;
+}
+
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    background: transparent;
+    border: 1px solid #e8edf4 !important;
+    border-radius: var(--radius-lg) !important;
+    box-shadow: 0 6px 14px rgba(15, 31, 56, 0.05);
+}
+
+/* Sidebar filter improvements */
+div[data-testid="stSidebar"] .stMultiSelect div[data-baseweb="select"],
+div[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] {
+    border-radius: 10px !important;
+}
+
+div[data-testid="stSidebar"] .stSlider [data-baseweb="slider"] {
+    padding-top: 12px;
+    padding-bottom: 4px;
+}
+
+div[data-testid="stSidebar"] .stSlider [role="slider"] {
+    background: var(--sunlife-gold) !important;
+    border: 2px solid #fff !important;
+}
+
+div[data-testid="stSidebar"] .stSlider div[data-testid="stTickBarMax"] {
+    background: rgba(255, 255, 255, 0.2) !important;
+}
+
+div[data-testid="stSidebar"] .stSlider div[data-testid="stTickBarMin"] {
+    background: rgba(236, 171, 35, 0.8) !important;
+}
+
+/* Sidebar filter boxes with navy header bars */
+div[data-testid="stSidebar"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.sl-filter-box-title) {
+    border: 1px solid rgba(255, 255, 255, 0.26) !important;
+    border-radius: 14px !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+    overflow: hidden;
+}
+
+.sl-filter-box-title {
+    margin: -0.62rem -0.72rem 0.65rem -0.72rem;
+    padding: 0.62rem 0.78rem;
+    background: var(--sunlife-navy-light);
+    color: #ffffff !important;
+    font-size: 0.76rem;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Executive narrative cards */
+.sl-insight-hero {
+    background: linear-gradient(145deg, #ffffff 0%, #f8fbff 100%);
+    border: 1px solid #e6edf6;
+    border-radius: 16px;
+    padding: 16px 18px;
+    margin: 8px 0 14px 0;
+    box-shadow: 0 8px 18px rgba(15, 31, 56, 0.06);
+}
+
+.sl-insight-kicker {
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #64748b;
+    margin-bottom: 4px;
+}
+
+.sl-insight-title {
+    font-size: 1.1rem;
+    font-weight: 900;
+    color: var(--sunlife-navy-dark);
+    margin-bottom: 12px;
+}
+
+.sl-insight-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.sl-insight-metric {
+    border: 1px solid #e6edf6;
+    border-radius: 12px;
+    background: #ffffff;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    justify-content: center;
+    min-height: 72px;
+}
+
+.sl-insight-label {
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #64748b;
+    font-weight: 800;
+}
+
+.sl-insight-value {
+    font-size: 1rem;
+    font-weight: 900;
+    color: var(--sunlife-navy);
+}
+
+.sl-summary-block-title {
+    font-size: 0.82rem;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sunlife-navy-dark);
+    margin-bottom: 10px;
+}
+
+/* Better alignment for markdown bullets inside bordered summary cards */
+div[data-testid="stVerticalBlockBorderWrapper"] ul {
+    margin-top: 0.2rem;
+    margin-bottom: 0.4rem;
+    padding-left: 1.15rem;
+}
+
+div[data-testid="stVerticalBlockBorderWrapper"] li {
+    margin-bottom: 0.35rem;
+    line-height: 1.45;
+}
+
+.sl-mini-stat {
+    border: 1px solid #e6edf6;
+    border-radius: 12px;
+    background: #ffffff;
+    padding: 10px 12px;
+    min-height: 82px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-start;
+}
+
+.sl-mini-stat .k {
+    font-size: 0.72rem;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 800;
+}
+
+.sl-mini-stat .v {
+    margin-top: 3px;
+    font-size: 1.08rem;
+    color: var(--sunlife-navy);
+    font-weight: 900;
+}
+
+.sl-mini-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 6px;
+    align-items: stretch;
 }
 
 /* Expander */
@@ -521,6 +882,10 @@ div[data-testid="stDataFrame"] [data-testid="stToolbar"] {
     
     div[data-testid="stMetricValue"] {
         font-size: 1.5rem;
+    }
+
+    .sl-mini-stat-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 

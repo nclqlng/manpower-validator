@@ -1,7 +1,7 @@
 import io
 import socket
 from typing import Optional
-from pathlib import Path  # <-- ADD THIS LINE
+from pathlib import Path  
 import textwrap
 
 import csv
@@ -58,7 +58,7 @@ def _altair_theme() -> None:
         "sl_modern",
         lambda: {
             "config": {
-                "background": "transparent",
+                "background": "#ffffff",
                 "view": {"stroke": "transparent"},
                 "range": {"category": palette},
                 "axis": {
@@ -180,6 +180,21 @@ def _render_top_advisors_chart(top_advisors: pd.DataFrame, ranking_metric: str) 
     metric = ranking_metric
     df = top_advisors.copy()
     df["Advisor"] = df["Advisor"].astype(str)
+    df = df.sort_values(metric, ascending=False).reset_index(drop=True)
+    df["Rank"] = df.index + 1
+    df["Rank Label"] = "Rank " + df["Rank"].astype(str)
+
+    rank_palette_seed = [
+        "#f5b400",  # Rank 1 - sunlife gold
+        "#2d4a7c",  # Rank 2 - sunlife navy light
+        "#0f1f38",  # Rank 3 - sunlife navy dark
+        "#f97316",  # Rank 4 - sunlife orange
+        "#2dd4bf",  # Rank 5 - sunlife teal
+        "#22c55e",  # Rank 6 - success
+        "#f59e0b",  # Rank 7 - warning
+    ]
+    rank_colors = [rank_palette_seed[i % len(rank_palette_seed)] for i in range(len(df))]
+    rank_domain = df["Rank Label"].tolist()
 
     chart = (
         alt.Chart(df)
@@ -187,8 +202,14 @@ def _render_top_advisors_chart(top_advisors: pd.DataFrame, ranking_metric: str) 
         .encode(
             y=alt.Y("Advisor:N", sort="-x", title=None),
             x=alt.X(f"{metric}:Q", title=None),
-            color=alt.value("#1A5A8A"),
+            color=alt.Color(
+                "Rank Label:N",
+                title=None,
+                legend=None,
+                scale=alt.Scale(domain=rank_domain, range=rank_colors),
+            ),
             tooltip=[
+                alt.Tooltip("Rank:Q"),
                 alt.Tooltip("Advisor:N"),
                 alt.Tooltip("AC:Q", format=",.2f"),
                 alt.Tooltip("NSC:Q", format=",.2f"),
@@ -306,6 +327,12 @@ def render_section(title: str, subtitle: str) -> None:
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_chart_card(title: str, render_fn) -> None:
+    with st.container(border=True):
+        st.markdown(f'<div class="sl-chart-title">{title}</div>', unsafe_allow_html=True)
+        render_fn()
 
 
 st.set_page_config(page_title="Manpower Validation System", layout="wide")
@@ -1216,7 +1243,7 @@ period_quarters = sort_period_labels(
     list({str(p) for p in df["Period Quarter"].fillna("Unknown")}), freq="Q"
 )
 
-st.sidebar.header("Dashboard Filters")
+st.sidebar.title("Dashboard Filters")
 with st.sidebar.expander("How to use this dashboard", expanded=False):
     st.markdown(
         "- Upload one or more files with the same layout.\n"
@@ -1224,7 +1251,16 @@ with st.sidebar.expander("How to use this dashboard", expanded=False):
         "- Use filters to focus the story by period/classification.\n"
         "- Download full Excel report with charts and summaries."
     )
-selected_classes = st.sidebar.multiselect("Classification", classes, default=classes)
+
+with st.sidebar.container(border=True):
+    st.markdown('<div class="sl-filter-box-title">Classification</div>', unsafe_allow_html=True)
+    selected_classes = st.multiselect("Classification", classes, default=classes, label_visibility="collapsed")
+    search_term = st.text_input(
+        "Search advisor or classification",
+        value="",
+        placeholder="Type advisor name or class...",
+        help="Quickly filter dashboard records by advisor name or classification.",
+    )
 # Build month<->quarter links from available data.
 month_quarter_pairs = (
     df[["Period Month", "Period Quarter"]]
@@ -1271,24 +1307,39 @@ if 0 < len(saved_months) < len(period_months):
         quarter_options = constrained_quarters
         saved_quarters = [q for q in saved_quarters if q in quarter_options] or quarter_options
 
-selected_months = st.sidebar.multiselect(
-    "Months", month_options, default=saved_months, key="filter_months"
-)
-selected_quarters = st.sidebar.multiselect(
-    "Quarters", quarter_options, default=saved_quarters, key="filter_quarters"
-)
-top_n = st.sidebar.slider("Top advisors to show", min_value=5, max_value=30, value=10, step=1)
-ranking_metric = st.sidebar.selectbox("Advisor ranking metric", ["AC", "NSC", "Lives"], index=0)
-st.sidebar.header("🎯 Performance Targets")
-target_ac = st.sidebar.number_input("Target AC", min_value=0.0, value=0.0, step=1000.0)
-target_nsc = st.sidebar.number_input("Target NSC", min_value=0.0, value=0.0, step=1000.0)
-target_lives = st.sidebar.number_input("Target Lives", min_value=0.0, value=0.0, step=10.0)
+with st.sidebar.container(border=True):
+    st.markdown('<div class="sl-filter-box-title">Time Period</div>', unsafe_allow_html=True)
+    st.caption("Months")
+    selected_months = st.multiselect(
+        "Months", month_options, default=saved_months, key="filter_months", label_visibility="collapsed"
+    )
+    st.caption("Quarters")
+    selected_quarters = st.multiselect(
+        "Quarters", quarter_options, default=saved_quarters, key="filter_quarters", label_visibility="collapsed"
+    )
+
+with st.sidebar.container(border=True):
+    st.markdown('<div class="sl-filter-box-title">Ranking</div>', unsafe_allow_html=True)
+    top_n = st.slider("Top advisors to show", min_value=5, max_value=30, value=10, step=1)
+    ranking_metric = st.selectbox("Advisor ranking metric", ["AC", "NSC", "Lives"], index=0)
+
+with st.sidebar.container(border=True):
+    st.markdown('<div class="sl-filter-box-title">Performance Targets</div>', unsafe_allow_html=True)
+    target_ac = st.number_input("Target AC", min_value=0.0, value=0.0, step=1000.0)
+    target_nsc = st.number_input("Target NSC", min_value=0.0, value=0.0, step=1000.0)
+    target_lives = st.number_input("Target Lives", min_value=0.0, value=0.0, step=10.0)
 
 filtered = df[
     df["Classification"].isin(selected_classes)
     & df["Period Month"].isin(selected_months)
     & df["Period Quarter"].isin(selected_quarters)
 ].copy()
+
+search_text = search_term.strip().lower()
+if search_text:
+    advisor_match = filtered["Advisor"].astype(str).str.lower().str.contains(search_text, na=False)
+    class_match = filtered["Classification"].astype(str).str.lower().str.contains(search_text, na=False)
+    filtered = filtered[advisor_match | class_match].copy()
 
 if filtered.empty:
     st.warning("No rows match your filters.")
@@ -1499,12 +1550,33 @@ top_advisor_row = top_advisors.iloc[0] if not top_advisors.empty else None
 coverage = (top_class["AC"] / total_ac * 100) if top_class is not None and total_ac else 0
 
 if latest_month is not None:
-    headline = (
-        f"In **{latest_month['Period Month']}**, production reached "
-        f"**AC {latest_month['AC']:,.2f}**, **NSC {latest_month['NSC']:,.2f}**, "
-        f"and **Lives {latest_month['Lives']:,.0f}**."
+    st.markdown(
+        f"In **{latest_month['Period Month']}**, production reached **AC {latest_month['AC']:,.2f}**, "
+        f"**NSC {latest_month['NSC']:,.2f}**, and **Lives {latest_month['Lives']:,.0f}**."
     )
-    st.markdown(headline)
+    st.markdown(
+        f"""
+        <div class="sl-insight-hero">
+            <div class="sl-insight-kicker">Monthly Production Snapshot</div>
+            <div class="sl-insight-title">{latest_month['Period Month']}</div>
+            <div class="sl-insight-metrics">
+                <div class="sl-insight-metric">
+                    <span class="sl-insight-label">AC</span>
+                    <span class="sl-insight-value">{format_compact(float(latest_month['AC']))}</span>
+                </div>
+                <div class="sl-insight-metric">
+                    <span class="sl-insight-label">NSC</span>
+                    <span class="sl-insight-value">{format_compact(float(latest_month['NSC']))}</span>
+                </div>
+                <div class="sl-insight-metric">
+                    <span class="sl-insight-label">Lives</span>
+                    <span class="sl-insight-value">{int(latest_month['Lives']):,}</span>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 insight_lines = []
 if top_class is not None:
@@ -1524,19 +1596,32 @@ if previous_month is not None and latest_month is not None:
         f"from {previous_month['Period Month']} to {latest_month['Period Month']}."
     )
 if insight_lines:
-    st.markdown("### Executive Insights")
-    st.markdown("\n".join(insight_lines))
+    with st.container(border=True):
+        st.markdown('<div class="sl-summary-block-title">Executive Insights</div>', unsafe_allow_html=True)
+        st.markdown("\n".join(insight_lines))
 
 validation_pass_count = int((advisor_validation["Validation Status"] == "Pass").sum())
 validation_total = len(advisor_validation)
 vna_count = int((advisor_validation["VNA Eligible"] == "Yes").sum())
 vmp_count = int((advisor_validation["VMP Eligible"] == "Yes").sum())
 sm_eligible_count = int((advisor_validation["SM Appointment Eligible"] == "Yes").sum())
-st.markdown(
-    f"### Validation Snapshot\n"
-    f"- Passed standards: **{validation_pass_count}/{validation_total}** advisors\n"
-    f"- VNA eligible: **{vna_count}** | VMP eligible: **{vmp_count}** | SM-appointment eligible: **{sm_eligible_count}**"
-)
+with st.container(border=True):
+    st.markdown('<div class="sl-summary-block-title">Validation Snapshot</div>', unsafe_allow_html=True)
+    st.markdown(
+        f"- Passed standards: **{validation_pass_count}/{validation_total}** advisors\n"
+        f"- VNA eligible: **{vna_count}** | VMP eligible: **{vmp_count}** | SM-appointment eligible: **{sm_eligible_count}**"
+    )
+    st.markdown(
+        f"""
+        <div class="sl-mini-stat-grid">
+            <div class="sl-mini-stat"><span class="k">Passed Standards</span><span class="v">{validation_pass_count}/{validation_total}</span></div>
+            <div class="sl-mini-stat"><span class="k">VNA Eligible</span><span class="v">{vna_count}</span></div>
+            <div class="sl-mini-stat"><span class="k">VMP Eligible</span><span class="v">{vmp_count}</span></div>
+            <div class="sl-mini-stat"><span class="k">SM Eligible</span><span class="v">{sm_eligible_count}</span></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 story_tab, drivers_tab, trends_tab, details_tab = st.tabs(["Story", "Drivers", "Trends", "Details"])
 with story_tab:
@@ -1549,10 +1634,15 @@ with story_tab:
     st.markdown("**Performance composition by classification**")
     comp_col1, comp_col2 = st.columns(2)
     with comp_col1:
-        _render_classification_composition_chart(classification_summary)
+        render_chart_card(
+            "Classification composition",
+            lambda: _render_classification_composition_chart(classification_summary),
+        )
     with comp_col2:
-        st.markdown(f"**Top {top_n} advisors by {ranking_metric}**")
-        _render_top_advisors_chart(top_advisors, ranking_metric=ranking_metric)
+        render_chart_card(
+            f"Top {top_n} advisors by {ranking_metric}",
+            lambda: _render_top_advisors_chart(top_advisors, ranking_metric=ranking_metric),
+        )
 
 with drivers_tab:
     st.markdown("**Who drives production?**")
@@ -1576,40 +1666,62 @@ with drivers_tab:
 with trends_tab:
     trend_col1, trend_col2 = st.columns(2)
     with trend_col1:
-        st.markdown("**Monthly momentum (AC / NSC / Lives)**")
-        _render_monthly_momentum_chart(monthly_kpi)
+        render_chart_card(
+            "Monthly momentum (AC / NSC / Lives)",
+            lambda: _render_monthly_momentum_chart(monthly_kpi),
+        )
     with trend_col2:
-        st.markdown("**Monthly AC by classification**")
-        _render_monthly_ac_by_classification(monthly_summary, ordered_months=period_months)
-    st.markdown("**Quarterly AC trend by classification**")
-    quarterly_kpi = quarterly_summary.pivot(
-        index="Period Quarter", columns="Classification", values="AC"
-    ).fillna(0)
-    if _altair_enabled() and not quarterly_summary.empty:
-        _altair_theme()
-        qdf = quarterly_summary.copy()
-        qdf["Period Quarter"] = qdf["Period Quarter"].astype(str)
-        q_order = sort_period_labels(
-            list({str(p) for p in qdf["Period Quarter"].fillna("Unknown")}), freq="Q"
+        render_chart_card(
+            "Monthly AC by classification",
+            lambda: _render_monthly_ac_by_classification(monthly_summary, ordered_months=period_months),
         )
-        q_chart = (
-            alt.Chart(qdf)
-            .mark_area(opacity=0.55, interpolate="monotone")
-            .encode(
-                x=alt.X("Period Quarter:N", sort=q_order, title=None, axis=alt.Axis(labelAngle=0)),
-                y=alt.Y("AC:Q", stack=True, title=None),
-                color=alt.Color("Classification:N", title=None),
-                tooltip=[
-                    alt.Tooltip("Period Quarter:N", title="Quarter"),
-                    alt.Tooltip("Classification:N"),
-                    alt.Tooltip("AC:Q", format=",.2f"),
-                ],
+    render_chart_card(
+        "Quarterly AC trend by classification",
+        lambda: (
+            st.altair_chart(
+                (
+                    alt.Chart(
+                        quarterly_summary.assign(
+                            **{"Period Quarter": quarterly_summary["Period Quarter"].astype(str)}
+                        )
+                    )
+                    .mark_area(opacity=0.55, interpolate="monotone")
+                    .encode(
+                        x=alt.X(
+                            "Period Quarter:N",
+                            sort=sort_period_labels(
+                                list(
+                                    {
+                                        str(p)
+                                        for p in quarterly_summary["Period Quarter"].fillna("Unknown")
+                                    }
+                                ),
+                                freq="Q",
+                            ),
+                            title=None,
+                            axis=alt.Axis(labelAngle=0),
+                        ),
+                        y=alt.Y("AC:Q", stack=True, title=None),
+                        color=alt.Color("Classification:N", title=None),
+                        tooltip=[
+                            alt.Tooltip("Period Quarter:N", title="Quarter"),
+                            alt.Tooltip("Classification:N"),
+                            alt.Tooltip("AC:Q", format=",.2f"),
+                        ],
+                    )
+                    .properties(height=280)
+                ),
+                use_container_width=True,
             )
-            .properties(height=280)
-        )
-        st.altair_chart(q_chart, use_container_width=True)
-    else:
-        st.area_chart(quarterly_kpi, height=280)
+            if (_altair_enabled() and not quarterly_summary.empty)
+            else st.area_chart(
+                quarterly_summary.pivot(
+                    index="Period Quarter", columns="Classification", values="AC"
+                ).fillna(0),
+                height=280,
+            )
+        ),
+    )
 
 with details_tab:
     tab1, tab2, tab3, tab4, tab5 = st.tabs(
