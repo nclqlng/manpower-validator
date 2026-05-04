@@ -1952,6 +1952,68 @@ with details_tab:
         st.dataframe(quarterly_summary, use_container_width=True)
     with tab3:
         st.dataframe(advisor_detail, use_container_width=True, height=420)
+        st.markdown("**Advisor AC trend (monthly)**")
+        advisor_monthly_ac = (
+            filtered.groupby(["Period Month", "Advisor"], dropna=False)[["AC"]]
+            .sum()
+            .reset_index()
+        )
+        advisor_monthly_ac = advisor_monthly_ac[advisor_monthly_ac["Period Month"] != "Unknown"].copy()
+        advisor_monthly_ac["AC"] = pd.to_numeric(advisor_monthly_ac["AC"], errors="coerce").fillna(0.0)
+        if not advisor_monthly_ac.empty:
+            advisor_monthly_ac["MonthSort"] = pd.PeriodIndex(advisor_monthly_ac["Period Month"], freq="M")
+            advisor_monthly_ac = advisor_monthly_ac.sort_values(["MonthSort", "Advisor"]).drop(columns=["MonthSort"])
+        advisor_options = sorted(
+            {str(a) for a in advisor_monthly_ac["Advisor"].dropna() if str(a).strip()}
+        )
+        default_advisors = (
+            top_advisors["Advisor"].astype(str).head(min(5, len(top_advisors))).tolist()
+            if not top_advisors.empty
+            else advisor_options[:5]
+        )
+        selected_advisor_trend = st.multiselect(
+            "Select advisors for AC trend",
+            advisor_options,
+            default=[a for a in default_advisors if a in advisor_options],
+            key="advisor_ac_trend_selection",
+        )
+
+        if selected_advisor_trend and not advisor_monthly_ac.empty:
+            trend_plot_df = advisor_monthly_ac[
+                advisor_monthly_ac["Advisor"].isin(selected_advisor_trend)
+            ].copy()
+            trend_plot_df["Period Month"] = trend_plot_df["Period Month"].astype(str)
+            month_order = sort_period_labels(
+                list({str(m) for m in trend_plot_df["Period Month"].dropna() if str(m).strip()}),
+                freq="M",
+            )
+            if _altair_enabled():
+                _altair_theme()
+                trend_chart = (
+                    alt.Chart(trend_plot_df)
+                    .mark_line(point=True)
+                    .encode(
+                        x=alt.X("Period Month:N", sort=month_order, title=None, axis=alt.Axis(labelAngle=0)),
+                        y=alt.Y("AC:Q", title="AC"),
+                        color=alt.Color("Advisor:N", title="Advisor"),
+                        tooltip=[
+                            alt.Tooltip("Period Month:N", title="Month"),
+                            alt.Tooltip("Advisor:N"),
+                            alt.Tooltip("AC:Q", format=",.2f"),
+                        ],
+                    )
+                    .properties(height=300)
+                )
+                st.altair_chart(trend_chart, use_container_width=True)
+            else:
+                line_df = (
+                    trend_plot_df.pivot(index="Period Month", columns="Advisor", values="AC")
+                    .fillna(0)
+                    .reindex(month_order)
+                )
+                st.line_chart(line_df, height=300, use_container_width=True)
+        else:
+            st.caption("Select at least one advisor to view AC trend.")
     with tab4:
         st.caption(
             "Edit training checkboxes below. Validation status updates automatically based on your selections."
