@@ -656,6 +656,33 @@ def evaluate_sunlife_validation(row: pd.Series) -> dict[str, object]:
     }
 
 
+TRAINING_COLUMNS = ["JFW Done", "START Done", "Pillars Done", "VUL Advance Done"]
+
+
+def required_training_by_row(row: pd.Series) -> dict[str, bool]:
+    cls = str(row.get("Classification", "")).strip().upper()
+    tenure_text = str(row.get("Tenure Raw", "")).strip().lower()
+    is_external_mc = cls == "MC" and "external" in tenure_text
+    requires_bundle = cls == "A" or is_external_mc
+    requires_vul = cls == "B"
+    return {
+        "JFW Done": requires_bundle,
+        "START Done": requires_bundle,
+        "Pillars Done": requires_bundle,
+        "VUL Advance Done": requires_vul,
+    }
+
+
+def enforce_training_requirements(df: pd.DataFrame) -> pd.DataFrame:
+    adjusted = df.copy()
+    for idx, row in adjusted.iterrows():
+        required = required_training_by_row(row)
+        for col in TRAINING_COLUMNS:
+            if not required[col]:
+                adjusted.at[idx, col] = False
+    return adjusted
+
+
 uploaded_files = st.file_uploader(
     "Upload Excel file(s)", type=["xlsx", "xlsm", "xls"], accept_multiple_files=True
 )
@@ -1402,6 +1429,29 @@ validation_cols = advisor_validation.apply(evaluate_sunlife_validation, axis=1, 
 advisor_validation = pd.concat([advisor_validation, validation_cols], axis=1).sort_values(
     ["Validation Status", "AC+NSC", "Advisor"], ascending=[True, False, True]
 )
+advisor_validation["Validation Row Key"] = (
+    advisor_validation["Advisor"].astype(str).str.strip()
+    + "||"
+    + advisor_validation["Classification"].astype(str).str.strip()
+)
+
+validation_overrides: dict[str, dict[str, bool]] = st.session_state.get("validation_overrides", {})
+if validation_overrides:
+    for idx, row in advisor_validation.iterrows():
+        row_key = str(row["Validation Row Key"])
+        row_override = validation_overrides.get(row_key)
+        if not row_override:
+            continue
+        for col in TRAINING_COLUMNS:
+            if col in row_override:
+                advisor_validation.at[idx, col] = bool(row_override[col])
+advisor_validation = enforce_training_requirements(advisor_validation)
+validation_cols = advisor_validation.apply(evaluate_sunlife_validation, axis=1, result_type="expand")
+advisor_validation = pd.concat(
+    [advisor_validation.drop(columns=validation_cols.columns, errors="ignore"), validation_cols], axis=1
+).sort_values(["Validation Status", "AC+NSC", "Advisor"], ascending=[True, False, True])
+advisor_validation["AC Remaining Balance"] = (float(target_ac) - advisor_validation["AC"]).clip(lower=0)
+advisor_validation["NSC Remaining Balance"] = (float(target_nsc) - advisor_validation["NSC"]).clip(lower=0)
 
 render_section("Story Dashboard", "Executive summary, validation snapshot, drivers, trends, and details.")
 total_ac = filtered["AC"].sum()
@@ -1734,7 +1784,118 @@ with details_tab:
     with tab3:
         st.dataframe(advisor_detail, use_container_width=True, height=420)
     with tab4:
-        st.dataframe(advisor_validation, use_container_width=True, height=420)
+        st.caption(
+            "Edit training checkboxes below. Validation status updates automatically based on your selections."
+        )
+        validation_status_filter = st.selectbox(
+            "Show validation status",
+            options=["All", "Pass", "Fail"],
+            index=0,
+            key="validation_status_filter",
+        )
+        previous_overrides: dict[str, dict[str, bool]] = dict(st.session_state.get("validation_overrides", {}))
+        editor_cols = [
+            "Advisor",
+            "Classification",
+            "AC",
+            "NSC",
+            "AC Remaining Balance",
+            "NSC Remaining Balance",
+            "AC+NSC",
+            "Tenure Raw",
+            "Coding Quarter",
+            "JFW Done",
+            "START Done",
+            "Pillars Done",
+            "VUL Advance Done",
+            "Validation Requirement",
+            "Validation Status",
+            "Validation Reason",
+            "VNA Eligible",
+            "VMP Eligible",
+            "SM Appointment Eligible",
+        ]
+        filtered_validation = advisor_validation.copy()
+        if validation_status_filter != "All":
+            filtered_validation = filtered_validation[
+                filtered_validation["Validation Status"] == validation_status_filter
+            ].copy()
+        editor_source = filtered_validation.set_index("Validation Row Key")[editor_cols].copy()
+        edited_validation = st.data_editor(
+            editor_source,
+            use_container_width=True,
+            height=420,
+            hide_index=True,
+            disabled=[
+                "Advisor",
+                "Classification",
+                "AC",
+                "NSC",
+                "AC Remaining Balance",
+                "NSC Remaining Balance",
+                "AC+NSC",
+                "Tenure Raw",
+                "Coding Quarter",
+                "Validation Requirement",
+                "Validation Status",
+                "Validation Reason",
+                "VNA Eligible",
+                "VMP Eligible",
+                "SM Appointment Eligible",
+            ],
+            column_config={
+                "AC": st.column_config.NumberColumn("AC", format="%.2f"),
+                "NSC": st.column_config.NumberColumn("NSC", format="%.2f"),
+                "AC Remaining Balance": st.column_config.NumberColumn("AC Remaining", format="%.2f"),
+                "NSC Remaining Balance": st.column_config.NumberColumn("NSC Remaining", format="%.2f"),
+                "JFW Done": st.column_config.CheckboxColumn("JFW"),
+                "START Done": st.column_config.CheckboxColumn("START"),
+                "Pillars Done": st.column_config.CheckboxColumn("Pillars"),
+                "VUL Advance Done": st.column_config.CheckboxColumn("VUL Advance"),
+            },
+            key="validation_training_editor",
+        )
+        edited_validation = edited_validation.reset_index().rename(columns={"index": "Validation Row Key"})
+        updated_overrides = {
+            str(row["Validation Row Key"]): {
+                "JFW Done": bool(row["JFW Done"]),
+                "START Done": bool(row["START Done"]),
+                "Pillars Done": bool(row["Pillars Done"]),
+                "VUL Advance Done": bool(row["VUL Advance Done"]),
+            }
+            for _, row in edited_validation.iterrows()
+        }
+        st.session_state["validation_overrides"] = updated_overrides
+        if updated_overrides != previous_overrides:
+            st.rerun()
+
+        advisor_validation = advisor_validation.merge(
+            edited_validation[
+                [
+                    "Validation Row Key",
+                    "JFW Done",
+                    "START Done",
+                    "Pillars Done",
+                    "VUL Advance Done",
+                ]
+            ],
+            on="Validation Row Key",
+            how="left",
+            suffixes=("", "_edited"),
+        )
+        for col in TRAINING_COLUMNS:
+            advisor_validation[col] = advisor_validation[f"{col}_edited"].fillna(advisor_validation[col]).astype(bool)
+        advisor_validation = advisor_validation.drop(
+            columns=[f"{col}_edited" for col in TRAINING_COLUMNS],
+            errors="ignore",
+        )
+        advisor_validation = enforce_training_requirements(advisor_validation)
+        validation_cols = advisor_validation.apply(evaluate_sunlife_validation, axis=1, result_type="expand")
+        advisor_validation = pd.concat(
+            [advisor_validation.drop(columns=validation_cols.columns, errors="ignore"), validation_cols], axis=1
+        ).sort_values(["Validation Status", "AC+NSC", "Advisor"], ascending=[True, False, True])
+        advisor_validation["AC Remaining Balance"] = (float(target_ac) - advisor_validation["AC"]).clip(lower=0)
+        advisor_validation["NSC Remaining Balance"] = (float(target_nsc) - advisor_validation["NSC"]).clip(lower=0)
     with tab5:
         quality_df = pd.DataFrame(
             [
@@ -1771,7 +1932,7 @@ export_bytes = to_excel_bytes(
         "Monthly Summary": monthly_summary,
         "Quarterly Summary": quarterly_summary,
         "Advisor Details": advisor_detail,
-        "Validation Results": advisor_validation,
+        "Validation Results": advisor_validation.drop(columns=["Validation Row Key"], errors="ignore"),
         "Filtered Raw Data": filtered,
     }
 )
