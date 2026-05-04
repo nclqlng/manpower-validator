@@ -12,6 +12,8 @@ from urllib.request import urlopen
 import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.utils import get_column_letter
 from pandas.errors import ParserError
 
 try:
@@ -530,8 +532,10 @@ def build_period_columns(
 
     out["Period Month"] = parsed_date.dt.to_period("M").astype(str)
     out["Period Quarter"] = parsed_date.dt.to_period("Q").astype(str)
+    out["Period Year"] = parsed_date.dt.year.astype("Int64").astype(str)
     out["Period Month"] = out["Period Month"].replace("NaT", "Unknown")
     out["Period Quarter"] = out["Period Quarter"].replace("NaT", "Unknown")
+    out["Period Year"] = out["Period Year"].replace("<NA>", "Unknown")
     return out
 
 
@@ -565,8 +569,114 @@ def to_excel_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         for sheet_name, data in sheets.items():
-            data.to_excel(writer, index=False, sheet_name=sheet_name[:31])
+            sheet_title = sheet_name[:31]
+            data.to_excel(writer, index=False, sheet_name=sheet_title)
+            if sheet_title == "Validation Results":
+                ws = writer.book[sheet_title]
+                _add_validation_results_excel_logic(ws)
     return buffer.getvalue()
+
+
+def _add_validation_results_excel_logic(ws) -> None:
+    headers = [cell.value for cell in ws[1]]
+    header_to_col = {str(header): idx + 1 for idx, header in enumerate(headers) if header is not None}
+    required_headers = [
+        "Classification",
+        "Tenure Raw",
+        "Coding Quarter",
+        "AC+NSC",
+        "JFW Done",
+        "START Done",
+        "Pillars Done",
+        "VUL Advance Done",
+        "Mandatory Training Done",
+        "Validation Requirement",
+        "Validation Status",
+        "Validation Reason",
+        "VNA Eligible",
+        "VMP Eligible",
+        "SM Appointment Eligible",
+    ]
+    if not all(header in header_to_col for header in required_headers):
+        return
+
+    last_row = ws.max_row
+    if last_row < 2:
+        return
+
+    jfw_col = get_column_letter(header_to_col["JFW Done"])
+    start_col = get_column_letter(header_to_col["START Done"])
+    pillars_col = get_column_letter(header_to_col["Pillars Done"])
+    vul_col = get_column_letter(header_to_col["VUL Advance Done"])
+    cls_col = get_column_letter(header_to_col["Classification"])
+    tenure_col = get_column_letter(header_to_col["Tenure Raw"])
+    coding_q_col = get_column_letter(header_to_col["Coding Quarter"])
+    acnsc_col = get_column_letter(header_to_col["AC+NSC"])
+    mandatory_col = get_column_letter(header_to_col["Mandatory Training Done"])
+    requirement_col = get_column_letter(header_to_col["Validation Requirement"])
+    status_col = get_column_letter(header_to_col["Validation Status"])
+    reason_col = get_column_letter(header_to_col["Validation Reason"])
+    vna_col = get_column_letter(header_to_col["VNA Eligible"])
+    vmp_col = get_column_letter(header_to_col["VMP Eligible"])
+    sm_col = get_column_letter(header_to_col["SM Appointment Eligible"])
+
+    # Add TRUE/FALSE dropdowns for training columns in downloaded Excel.
+    dv = DataValidation(type="list", formula1='"TRUE,FALSE"', allow_blank=True)
+    ws.add_data_validation(dv)
+    for col in (jfw_col, start_col, pillars_col, vul_col):
+        dv.add(f"{col}2:{col}{last_row}")
+
+    for row in range(2, last_row + 1):
+        cls = f"UPPER(TRIM({cls_col}{row}&\"\"))"
+        tenure = f"LOWER({tenure_col}{row}&\"\")"
+        coding_q = f"{coding_q_col}{row}"
+        acnsc = f"N({acnsc_col}{row})"
+        jfw_true = f"OR({jfw_col}{row}=TRUE,UPPER({jfw_col}{row}&\"\")=\"TRUE\")"
+        start_true = f"OR({start_col}{row}=TRUE,UPPER({start_col}{row}&\"\")=\"TRUE\")"
+        pillars_true = f"OR({pillars_col}{row}=TRUE,UPPER({pillars_col}{row}&\"\")=\"TRUE\")"
+        vul_true = f"OR({vul_col}{row}=TRUE,UPPER({vul_col}{row}&\"\")=\"TRUE\")"
+        mandatory_true = f"OR({mandatory_col}{row}=TRUE,UPPER({mandatory_col}{row}&\"\")=\"TRUE\")"
+        training_bundle_ok = f"AND({jfw_true},{start_true},{pillars_true})"
+        is_external_mc = f"AND({cls}=\"MC\",ISNUMBER(SEARCH(\"external\",{tenure})))"
+        is_rookie = (
+            f"OR(ISNUMBER(SEARCH(\"year 0\",{tenure})),"
+            f"ISNUMBER(SEARCH(\"rookie\",{tenure})),"
+            f"ISNUMBER(SEARCH(\"external\",{tenure})))"
+        )
+        passed_expr = (
+            f"IF({is_external_mc},AND({acnsc}>=45000,{training_bundle_ok}),"
+            f"IF({cls}=\"A\",AND({acnsc}>=IF({coding_q}=4,15000,45000),{training_bundle_ok}),"
+            f"IF({cls}=\"B\",AND({acnsc}>=90000,{vul_true}),"
+            f"IF({cls}=\"C\",{acnsc}>=135000,"
+            f"IF(OR({cls}=\"D\",{cls}=\"E\",{cls}=\"MC\",{cls}=\"F\"),{acnsc}>=180000,FALSE)))))"
+        )
+
+        ws[f"{requirement_col}{row}"] = (
+            f"=IF({is_external_mc},\"External MC: >=45K AC/NSC + JFW + START + 4 Pillars\","
+            f"IF({cls}=\"A\",IF({coding_q}=4,\"Rookie A: >=15,000 AC/NSC + JFW + START + 4 Pillars\","
+            f"\"Rookie A: >=45,000 AC/NSC + JFW + START + 4 Pillars\"),"
+            f"IF({cls}=\"B\",\"Tenured B: >=90K AC/NSC + VUL Advance\","
+            f"IF({cls}=\"C\",\"Tenured C: >=135K AC/NSC\","
+            f"IF(OR({cls}=\"D\",{cls}=\"E\",{cls}=\"MC\"),\"Tenured D/E/MC: >=180K AC/NSC\","
+            f"IF({cls}=\"F\",\"F advisor: optional, counted as VMP if >=180K AC/NSC\",\"No mapped rule\"))))))"
+        )
+        ws[f"{status_col}{row}"] = f"=IF({passed_expr},\"Pass\",\"Fail\")"
+        ws[f"{reason_col}{row}"] = (
+            f"=IF({passed_expr},"
+            f"IF({cls}=\"F\",\"Counts as VMP via >=180K AC/NSC.\",\"Meets requirement.\"),"
+            f"IF({is_external_mc},\"Needs AC/NSC >=45K and complete JFW/START/4 Pillars.\","
+            f"IF({cls}=\"A\",\"Needs AC/NSC threshold and complete JFW/START/4 Pillars.\","
+            f"IF({cls}=\"B\",\"Needs AC/NSC >=90K and VUL Advance completion.\","
+            f"IF({cls}=\"C\",\"Needs AC/NSC >=135K.\","
+            f"IF(OR({cls}=\"D\",{cls}=\"E\",{cls}=\"MC\"),\"Needs AC/NSC >=180K.\","
+            f"IF({cls}=\"F\",\"Below optional 180K VMP threshold.\","
+            f"\"Classification/tenure combination not mapped to a rule.\")))))))"
+        )
+        ws[f"{vna_col}{row}"] = f"=IF(AND({is_rookie},{passed_expr}),\"Yes\",\"No\")"
+        ws[f"{vmp_col}{row}"] = (
+            f"=IF(OR({passed_expr},AND({is_rookie},{acnsc}>=90000,{training_bundle_ok})),\"Yes\",\"No\")"
+        )
+        ws[f"{sm_col}{row}"] = f"=IF(AND({acnsc}>=180000,{mandatory_true}),\"Yes\",\"No\")"
 
 
 def performance_status(actual: float, target: float) -> str:
@@ -1182,6 +1292,10 @@ with st.expander("Preview mapped columns"):
 df = raw_df.copy()
 df["Advisor"] = df[advisor_col].astype(str).str.strip()
 df["Classification"] = df[class_col].astype(str).str.strip().str.upper()
+if "Unit" in df.columns:
+    df["Unit"] = df["Unit"].astype(str).str.strip()
+else:
+    df["Unit"] = "Unknown"
 
 corrected_dashboard_bytes: Optional[bytes] = None
 corrected_dashboard_file_name: Optional[str] = None
@@ -1263,12 +1377,20 @@ if series_is_mostly_numeric(df["Classification"]):
 
 render_section("2) Analysis Filters", "Narrow down classification and time periods for focused insights.")
 classes = sorted({str(c) for c in df["Classification"].dropna() if str(c).strip()})
+units = sorted({str(u) for u in df["Unit"].dropna() if str(u).strip()})
+if not units:
+    units = ["Unknown"]
 period_months = sort_period_labels(
     list({str(p) for p in df["Period Month"].fillna("Unknown")}), freq="M"
 )
 period_quarters = sort_period_labels(
     list({str(p) for p in df["Period Quarter"].fillna("Unknown")}), freq="Q"
 )
+period_years = sorted(
+    [y for y in {str(p) for p in df["Period Year"].fillna("Unknown")} if y != "Unknown"]
+)
+if "Unknown" in set(df["Period Year"].fillna("Unknown").astype(str)):
+    period_years.append("Unknown")
 
 st.sidebar.title("Dashboard Filters")
 with st.sidebar.expander("How to use this dashboard", expanded=False):
@@ -1282,67 +1404,112 @@ with st.sidebar.expander("How to use this dashboard", expanded=False):
 with st.sidebar.container(border=True):
     st.markdown('<div class="sl-filter-box-title">Classification</div>', unsafe_allow_html=True)
     selected_classes = st.multiselect("Classification", classes, default=classes, label_visibility="collapsed")
+    st.caption("Unit")
+    selected_units = st.multiselect("Unit", units, default=units, label_visibility="collapsed")
     search_term = st.text_input(
         "Search advisor or classification",
         value="",
         placeholder="Type advisor name or class...",
         help="Quickly filter dashboard records by advisor name or classification.",
     )
-# Build month<->quarter links from available data.
-month_quarter_pairs = (
-    df[["Period Month", "Period Quarter"]]
+# Build year<->quarter<->month links from available data.
+period_pairs = (
+    df[["Period Year", "Period Quarter", "Period Month"]]
     .dropna()
     .astype(str)
     .drop_duplicates()
 )
+year_to_quarters: dict[str, list[str]] = {}
+quarter_to_year: dict[str, str] = {}
 month_to_quarter: dict[str, str] = {}
 quarter_to_months: dict[str, list[str]] = {}
-for _, row in month_quarter_pairs.iterrows():
+month_to_year: dict[str, str] = {}
+for _, row in period_pairs.iterrows():
+    year_label = str(row["Period Year"])
     month_label = str(row["Period Month"])
     quarter_label = str(row["Period Quarter"])
-    if month_label and month_label != "Unknown" and quarter_label and quarter_label != "Unknown":
+    if (
+        year_label
+        and year_label != "Unknown"
+        and month_label
+        and month_label != "Unknown"
+        and quarter_label
+        and quarter_label != "Unknown"
+    ):
+        year_to_quarters.setdefault(year_label, [])
+        if quarter_label not in year_to_quarters[year_label]:
+            year_to_quarters[year_label].append(quarter_label)
+        quarter_to_year[quarter_label] = year_label
         month_to_quarter[month_label] = quarter_label
+        month_to_year[month_label] = year_label
         quarter_to_months.setdefault(quarter_label, []).append(month_label)
 
 saved_months = st.session_state.get("filter_months", period_months)
 saved_quarters = st.session_state.get("filter_quarters", period_quarters)
+saved_years = st.session_state.get("filter_years", period_years)
 saved_months = [m for m in saved_months if m in period_months] or period_months
 saved_quarters = [q for q in saved_quarters if q in period_quarters] or period_quarters
+saved_years = [y for y in saved_years if y in period_years] or period_years
 
 month_options = period_months
 quarter_options = period_quarters
+year_options = period_years
+
+# If a subset of years is selected, quarters are limited to those year(s).
+if 0 < len(saved_years) < len(period_years):
+    allowed_quarters = {
+        quarter
+        for year in saved_years
+        for quarter in year_to_quarters.get(year, [])
+    }
+    constrained_quarters = [q for q in period_quarters if q in allowed_quarters]
+    if constrained_quarters:
+        quarter_options = constrained_quarters
+        saved_quarters = [q for q in saved_quarters if q in quarter_options] or quarter_options
 
 # If a subset of quarters is selected, months are limited to those quarter(s).
-if 0 < len(saved_quarters) < len(period_quarters):
+if 0 < len(saved_quarters) < len(quarter_options):
     allowed_months = {
         month
         for quarter in saved_quarters
         for month in quarter_to_months.get(quarter, [])
     }
-    constrained_months = [m for m in period_months if m in allowed_months]
+    constrained_months = [m for m in month_options if m in allowed_months]
     if constrained_months:
         month_options = constrained_months
         saved_months = [m for m in saved_months if m in month_options] or month_options
 
 # If a subset of months is selected, quarters are limited to those month(s).
-if 0 < len(saved_months) < len(period_months):
+if 0 < len(saved_months) < len(month_options):
     allowed_quarters = {month_to_quarter.get(month) for month in saved_months}
     constrained_quarters = [
-        q for q in period_quarters if q in allowed_quarters and q is not None
+        q for q in quarter_options if q in allowed_quarters and q is not None
     ]
     if constrained_quarters:
         quarter_options = constrained_quarters
         saved_quarters = [q for q in saved_quarters if q in quarter_options] or quarter_options
 
+# If a subset of quarters is selected, years are limited to those quarter(s).
+if 0 < len(saved_quarters) < len(quarter_options):
+    allowed_years = {quarter_to_year.get(quarter) for quarter in saved_quarters}
+    constrained_years = [y for y in period_years if y in allowed_years and y is not None]
+    if constrained_years:
+        year_options = constrained_years
+        saved_years = [y for y in saved_years if y in year_options] or year_options
+
 with st.sidebar.container(border=True):
     st.markdown('<div class="sl-filter-box-title">Time Period</div>', unsafe_allow_html=True)
-    st.caption("Months")
-    selected_months = st.multiselect(
-        "Months", month_options, default=saved_months, key="filter_months", label_visibility="collapsed"
+    st.caption("Years")
+    selected_years = st.multiselect(
+        "Years", year_options, default=saved_years, key="filter_years", label_visibility="collapsed"
     )
     st.caption("Quarters")
     selected_quarters = st.multiselect(
         "Quarters", quarter_options, default=saved_quarters, key="filter_quarters", label_visibility="collapsed"
+    )
+    st.caption("Months")
+    selected_months = st.multiselect(
+        "Months", month_options, default=saved_months, key="filter_months", label_visibility="collapsed"
     )
 
 with st.sidebar.container(border=True):
@@ -1358,6 +1525,8 @@ with st.sidebar.container(border=True):
 
 filtered = df[
     df["Classification"].isin(selected_classes)
+    & df["Unit"].isin(selected_units)
+    & df["Period Year"].isin(selected_years)
     & df["Period Month"].isin(selected_months)
     & df["Period Quarter"].isin(selected_quarters)
 ].copy()
