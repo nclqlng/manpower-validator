@@ -584,6 +584,8 @@ def _add_validation_results_excel_logic(ws) -> None:
         "Classification",
         "Tenure Raw",
         "Coding Quarter",
+        "AC",
+        "NSC",
         "AC+NSC",
         "JFW Done",
         "START Done",
@@ -611,7 +613,8 @@ def _add_validation_results_excel_logic(ws) -> None:
     cls_col = get_column_letter(header_to_col["Classification"])
     tenure_col = get_column_letter(header_to_col["Tenure Raw"])
     coding_q_col = get_column_letter(header_to_col["Coding Quarter"])
-    acnsc_col = get_column_letter(header_to_col["AC+NSC"])
+    ac_col = get_column_letter(header_to_col["AC"])
+    nsc_col = get_column_letter(header_to_col["NSC"])
     mandatory_col = get_column_letter(header_to_col["Mandatory Training Done"])
     requirement_col = get_column_letter(header_to_col["Validation Requirement"])
     status_col = get_column_letter(header_to_col["Validation Status"])
@@ -630,7 +633,8 @@ def _add_validation_results_excel_logic(ws) -> None:
         cls = f"UPPER(TRIM({cls_col}{row}&\"\"))"
         tenure = f"LOWER({tenure_col}{row}&\"\")"
         coding_q = f"{coding_q_col}{row}"
-        acnsc = f"N({acnsc_col}{row})"
+        ac_value = f"N({ac_col}{row})"
+        nsc_value = f"N({nsc_col}{row})"
         jfw_true = f"OR({jfw_col}{row}=TRUE,UPPER({jfw_col}{row}&\"\")=\"TRUE\")"
         start_true = f"OR({start_col}{row}=TRUE,UPPER({start_col}{row}&\"\")=\"TRUE\")"
         pillars_true = f"OR({pillars_col}{row}=TRUE,UPPER({pillars_col}{row}&\"\")=\"TRUE\")"
@@ -643,40 +647,46 @@ def _add_validation_results_excel_logic(ws) -> None:
             f"ISNUMBER(SEARCH(\"rookie\",{tenure})),"
             f"ISNUMBER(SEARCH(\"external\",{tenure})))"
         )
+        both_45k = f"AND({ac_value}>=45000,{nsc_value}>=45000)"
+        both_90k = f"AND({ac_value}>=90000,{nsc_value}>=90000)"
+        both_135k = f"AND({ac_value}>=135000,{nsc_value}>=135000)"
+        both_180k = f"AND({ac_value}>=180000,{nsc_value}>=180000)"
+        rookie_threshold = f"IF({coding_q}=4,15000,45000)"
+        both_rookie_threshold = f"AND({ac_value}>={rookie_threshold},{nsc_value}>={rookie_threshold})"
         passed_expr = (
-            f"IF({is_external_mc},AND({acnsc}>=45000,{training_bundle_ok}),"
-            f"IF({cls}=\"A\",AND({acnsc}>=IF({coding_q}=4,15000,45000),{training_bundle_ok}),"
-            f"IF({cls}=\"B\",AND({acnsc}>=90000,{vul_true}),"
-            f"IF({cls}=\"C\",{acnsc}>=135000,"
-            f"IF(OR({cls}=\"D\",{cls}=\"E\",{cls}=\"MC\",{cls}=\"F\"),{acnsc}>=180000,FALSE)))))"
+            f"IF({is_external_mc},AND({both_45k},{training_bundle_ok}),"
+            f"IF({cls}=\"A\",AND({both_rookie_threshold},{training_bundle_ok}),"
+            f"IF({cls}=\"B\",AND({both_90k},{vul_true}),"
+            f"IF({cls}=\"C\",{both_135k},"
+            f"IF(OR({cls}=\"D\",{cls}=\"E\",{cls}=\"MC\",{cls}=\"F\"),{both_180k},FALSE)))))"
         )
 
         ws[f"{requirement_col}{row}"] = (
-            f"=IF({is_external_mc},\"External MC: >=45K AC/NSC + JFW + START + 4 Pillars\","
-            f"IF({cls}=\"A\",IF({coding_q}=4,\"Rookie A: >=15,000 AC/NSC + JFW + START + 4 Pillars\","
-            f"\"Rookie A: >=45,000 AC/NSC + JFW + START + 4 Pillars\"),"
-            f"IF({cls}=\"B\",\"Tenured B: >=90K AC/NSC + VUL Advance\","
-            f"IF({cls}=\"C\",\"Tenured C: >=135K AC/NSC\","
-            f"IF(OR({cls}=\"D\",{cls}=\"E\",{cls}=\"MC\"),\"Tenured D/E/MC: >=180K AC/NSC\","
-            f"IF({cls}=\"F\",\"F advisor: optional, counted as VMP if >=180K AC/NSC\",\"No mapped rule\"))))))"
+            f"=IF({is_external_mc},\"External MC: AC>=45K and NSC>=45K + JFW + START + 4 Pillars\","
+            f"IF({cls}=\"A\",IF({coding_q}=4,\"Rookie A: AC>=15,000 and NSC>=15,000 + JFW + START + 4 Pillars\","
+            f"\"Rookie A: AC>=45,000 and NSC>=45,000 + JFW + START + 4 Pillars\"),"
+            f"IF({cls}=\"B\",\"Tenured B: AC>=90K and NSC>=90K + VUL Advance\","
+            f"IF({cls}=\"C\",\"Tenured C: AC>=135K and NSC>=135K\","
+            f"IF(OR({cls}=\"D\",{cls}=\"E\",{cls}=\"MC\"),\"Tenured D/E/MC: AC>=180K and NSC>=180K\","
+            f"IF({cls}=\"F\",\"F advisor: optional, counted as VMP if AC>=180K and NSC>=180K\",\"No mapped rule\"))))))"
         )
         ws[f"{status_col}{row}"] = f"=IF({passed_expr},\"Pass\",\"Fail\")"
         ws[f"{reason_col}{row}"] = (
             f"=IF({passed_expr},"
-            f"IF({cls}=\"F\",\"Counts as VMP via >=180K AC/NSC.\",\"Meets requirement.\"),"
-            f"IF({is_external_mc},\"Needs AC/NSC >=45K and complete JFW/START/4 Pillars.\","
-            f"IF({cls}=\"A\",\"Needs AC/NSC threshold and complete JFW/START/4 Pillars.\","
-            f"IF({cls}=\"B\",\"Needs AC/NSC >=90K and VUL Advance completion.\","
-            f"IF({cls}=\"C\",\"Needs AC/NSC >=135K.\","
-            f"IF(OR({cls}=\"D\",{cls}=\"E\",{cls}=\"MC\"),\"Needs AC/NSC >=180K.\","
-            f"IF({cls}=\"F\",\"Below optional 180K VMP threshold.\","
+            f"IF({cls}=\"F\",\"Counts as VMP via AC>=180K and NSC>=180K.\",\"Meets requirement.\"),"
+            f"IF({is_external_mc},\"Needs AC>=45K, NSC>=45K, and complete JFW/START/4 Pillars.\","
+            f"IF({cls}=\"A\",\"Needs AC/NSC threshold (both) and complete JFW/START/4 Pillars.\","
+            f"IF({cls}=\"B\",\"Needs AC>=90K, NSC>=90K, and VUL Advance completion.\","
+            f"IF({cls}=\"C\",\"Needs AC>=135K and NSC>=135K.\","
+            f"IF(OR({cls}=\"D\",{cls}=\"E\",{cls}=\"MC\"),\"Needs AC>=180K and NSC>=180K.\","
+            f"IF({cls}=\"F\",\"Below optional 180K VMP threshold for AC and NSC.\","
             f"\"Classification/tenure combination not mapped to a rule.\")))))))"
         )
         ws[f"{vna_col}{row}"] = f"=IF(AND({is_rookie},{passed_expr}),\"Yes\",\"No\")"
         ws[f"{vmp_col}{row}"] = (
-            f"=IF(OR({passed_expr},AND({is_rookie},{acnsc}>=90000,{training_bundle_ok})),\"Yes\",\"No\")"
+            f"=IF(OR({passed_expr},AND({is_rookie},{both_90k},{training_bundle_ok})),\"Yes\",\"No\")"
         )
-        ws[f"{sm_col}{row}"] = f"=IF(AND({acnsc}>=180000,{mandatory_true}),\"Yes\",\"No\")"
+        ws[f"{sm_col}{row}"] = f"=IF(AND({both_180k},{mandatory_true}),\"Yes\",\"No\")"
 
 
 def performance_status(actual: float, target: float) -> str:
@@ -709,7 +719,8 @@ def normalize_flag(series: pd.Series) -> pd.Series:
 def evaluate_sunlife_validation(row: pd.Series) -> dict[str, object]:
     cls = str(row.get("Classification", "")).strip().upper()
     tenure_text = str(row.get("Tenure Raw", "")).strip().lower()
-    ac_nsc = float(row.get("AC+NSC", 0) or 0)
+    ac = float(row.get("AC", 0) or 0)
+    nsc = float(row.get("NSC", 0) or 0)
     coding_q = int(row.get("Coding Quarter", 0) or 0)
     jfw = bool(row.get("JFW Done", False))
     start = bool(row.get("START Done", False))
@@ -720,40 +731,41 @@ def evaluate_sunlife_validation(row: pd.Series) -> dict[str, object]:
     is_rookie = ("year 0" in tenure_text) or ("rookie" in tenure_text) or ("external" in tenure_text)
     is_external_mc = cls == "MC" and "external" in tenure_text
     training_bundle_ok = jfw and start and pillars
+    meets = lambda threshold: ac >= threshold and nsc >= threshold
 
     requirement = "No mapped rule"
     passed = False
     reason = "Classification/tenure combination not mapped to a rule."
 
     if is_external_mc:
-        requirement = "External MC: >=45K AC/NSC + JFW + START + 4 Pillars"
-        passed = ac_nsc >= 45_000 and training_bundle_ok
-        reason = "Meets requirement." if passed else "Needs AC/NSC >=45K and complete JFW/START/4 Pillars."
+        requirement = "External MC: AC>=45K and NSC>=45K + JFW + START + 4 Pillars"
+        passed = meets(45_000) and training_bundle_ok
+        reason = "Meets requirement." if passed else "Needs AC>=45K, NSC>=45K, and complete JFW/START/4 Pillars."
     elif cls == "A":
         threshold = 15_000 if coding_q == 4 else 45_000
-        requirement = f"Rookie A: >={threshold:,.0f} AC/NSC + JFW + START + 4 Pillars"
-        passed = ac_nsc >= threshold and training_bundle_ok
-        reason = "Meets requirement." if passed else "Needs AC/NSC threshold and complete JFW/START/4 Pillars."
+        requirement = f"Rookie A: AC>={threshold:,.0f} and NSC>={threshold:,.0f} + JFW + START + 4 Pillars"
+        passed = meets(threshold) and training_bundle_ok
+        reason = "Meets requirement." if passed else "Needs AC/NSC threshold (both) and complete JFW/START/4 Pillars."
     elif cls == "B":
-        requirement = "Tenured B: >=90K AC/NSC + VUL Advance"
-        passed = ac_nsc >= 90_000 and vul
-        reason = "Meets requirement." if passed else "Needs AC/NSC >=90K and VUL Advance completion."
+        requirement = "Tenured B: AC>=90K and NSC>=90K + VUL Advance"
+        passed = meets(90_000) and vul
+        reason = "Meets requirement." if passed else "Needs AC>=90K, NSC>=90K, and VUL Advance completion."
     elif cls == "C":
-        requirement = "Tenured C: >=135K AC/NSC"
-        passed = ac_nsc >= 135_000
-        reason = "Meets requirement." if passed else "Needs AC/NSC >=135K."
+        requirement = "Tenured C: AC>=135K and NSC>=135K"
+        passed = meets(135_000)
+        reason = "Meets requirement." if passed else "Needs AC>=135K and NSC>=135K."
     elif cls in {"D", "E", "MC"}:
-        requirement = "Tenured D/E/MC: >=180K AC/NSC"
-        passed = ac_nsc >= 180_000
-        reason = "Meets requirement." if passed else "Needs AC/NSC >=180K."
+        requirement = "Tenured D/E/MC: AC>=180K and NSC>=180K"
+        passed = meets(180_000)
+        reason = "Meets requirement." if passed else "Needs AC>=180K and NSC>=180K."
     elif cls == "F":
-        requirement = "F advisor: optional, counted as VMP if >=180K AC/NSC"
-        passed = ac_nsc >= 180_000
-        reason = "Counts as VMP via >=180K AC/NSC." if passed else "Below optional 180K VMP threshold."
+        requirement = "F advisor: optional, counted as VMP if AC>=180K and NSC>=180K"
+        passed = meets(180_000)
+        reason = "Counts as VMP via AC>=180K and NSC>=180K." if passed else "Below optional 180K VMP threshold for AC and NSC."
 
     vna = is_rookie and passed
-    rookie_vmp = is_rookie and (ac_nsc >= 90_000) and training_bundle_ok
-    sm_eligible = ac_nsc >= 180_000 and mandatory_training
+    rookie_vmp = is_rookie and meets(90_000) and training_bundle_ok
+    sm_eligible = meets(180_000) and mandatory_training
     vmp = passed or rookie_vmp
 
     return {
