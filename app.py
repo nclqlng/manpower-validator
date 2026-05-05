@@ -586,7 +586,6 @@ def _add_validation_results_excel_logic(ws) -> None:
         "Coding Quarter",
         "AC",
         "NSC",
-        "AC+NSC",
         "JFW Done",
         "START Done",
         "Pillars Done",
@@ -2173,7 +2172,9 @@ export_bytes = to_excel_bytes(
         "Monthly Summary": monthly_summary,
         "Quarterly Summary": quarterly_summary,
         "Advisor Details": advisor_detail,
-        "Validation Results": advisor_validation.drop(columns=["Validation Row Key"], errors="ignore"),
+        "Validation Results": advisor_validation.drop(
+            columns=["Validation Row Key", "AC+NSC"], errors="ignore"
+        ),
         "Filtered Raw Data": filtered,
     }
 )
