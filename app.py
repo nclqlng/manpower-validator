@@ -622,23 +622,53 @@ def _add_validation_results_excel_logic(ws) -> None:
     vmp_col = get_column_letter(header_to_col["VMP Eligible"])
     sm_col = get_column_letter(header_to_col["SM Appointment Eligible"])
 
-    # Add TRUE/FALSE dropdowns for training columns in downloaded Excel.
-    dv = DataValidation(type="list", formula1='"TRUE,FALSE"', allow_blank=True)
-    ws.add_data_validation(dv)
-    for col in (jfw_col, start_col, pillars_col, vul_col, mandatory_col):
-        dv.add(f"{col}2:{col}{last_row}")
-
     for row in range(2, last_row + 1):
+        row_cls = str(ws[f"{cls_col}{row}"].value or "").strip().upper()
+        row_tenure = str(ws[f"{tenure_col}{row}"].value or "").strip().lower()
+        row_is_external_mc = row_cls == "MC" and "external" in row_tenure
+        requires_bundle = row_cls == "A" or row_is_external_mc
+        requires_vul = row_cls == "B"
+
+        def _normalize_training_value(raw: object) -> str:
+            text = str(raw or "").strip().upper()
+            if text in {"TRUE", "YES", "1", "Y"}:
+                return "YES"
+            if text in {"FALSE", "NO", "0", "N"}:
+                return "NO"
+            return ""
+
+        # Required fields get YES/NO dropdown. Not-required fields are fixed to N/A.
+        field_requirements = {
+            jfw_col: requires_bundle,
+            start_col: requires_bundle,
+            pillars_col: requires_bundle,
+            vul_col: requires_vul,
+            mandatory_col: True,  # Always editable for SM appointment logic.
+        }
+        for col_letter, is_required in field_requirements.items():
+            cell_addr = f"{col_letter}{row}"
+            normalized = _normalize_training_value(ws[cell_addr].value)
+            if is_required:
+                ws[cell_addr].value = normalized if normalized in {"YES", "NO"} else "NO"
+                dv_required = DataValidation(type="list", formula1='"YES,NO"', allow_blank=False)
+                ws.add_data_validation(dv_required)
+                dv_required.add(cell_addr)
+            else:
+                ws[cell_addr].value = "N/A"
+                dv_na = DataValidation(type="list", formula1='"N/A"', allow_blank=False)
+                ws.add_data_validation(dv_na)
+                dv_na.add(cell_addr)
+
         cls = f"UPPER(TRIM({cls_col}{row}&\"\"))"
         tenure = f"LOWER({tenure_col}{row}&\"\")"
         coding_q = f"{coding_q_col}{row}"
         ac_value = f"N({ac_col}{row})"
         nsc_value = f"N({nsc_col}{row})"
-        jfw_true = f"OR({jfw_col}{row}=TRUE,UPPER({jfw_col}{row}&\"\")=\"TRUE\")"
-        start_true = f"OR({start_col}{row}=TRUE,UPPER({start_col}{row}&\"\")=\"TRUE\")"
-        pillars_true = f"OR({pillars_col}{row}=TRUE,UPPER({pillars_col}{row}&\"\")=\"TRUE\")"
-        vul_true = f"OR({vul_col}{row}=TRUE,UPPER({vul_col}{row}&\"\")=\"TRUE\")"
-        mandatory_true = f"OR({mandatory_col}{row}=TRUE,UPPER({mandatory_col}{row}&\"\")=\"TRUE\")"
+        jfw_true = f"OR({jfw_col}{row}=TRUE,UPPER({jfw_col}{row}&\"\")=\"TRUE\",UPPER({jfw_col}{row}&\"\")=\"YES\")"
+        start_true = f"OR({start_col}{row}=TRUE,UPPER({start_col}{row}&\"\")=\"TRUE\",UPPER({start_col}{row}&\"\")=\"YES\")"
+        pillars_true = f"OR({pillars_col}{row}=TRUE,UPPER({pillars_col}{row}&\"\")=\"TRUE\",UPPER({pillars_col}{row}&\"\")=\"YES\")"
+        vul_true = f"OR({vul_col}{row}=TRUE,UPPER({vul_col}{row}&\"\")=\"TRUE\",UPPER({vul_col}{row}&\"\")=\"YES\")"
+        mandatory_true = f"OR({mandatory_col}{row}=TRUE,UPPER({mandatory_col}{row}&\"\")=\"TRUE\",UPPER({mandatory_col}{row}&\"\")=\"YES\")"
         training_bundle_ok = f"AND({jfw_true},{start_true},{pillars_true})"
         is_external_mc = f"AND({cls}=\"MC\",ISNUMBER(SEARCH(\"external\",{tenure})))"
         is_rookie = (
