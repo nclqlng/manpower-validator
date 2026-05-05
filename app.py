@@ -625,7 +625,7 @@ def _add_validation_results_excel_logic(ws) -> None:
     # Add TRUE/FALSE dropdowns for training columns in downloaded Excel.
     dv = DataValidation(type="list", formula1='"TRUE,FALSE"', allow_blank=True)
     ws.add_data_validation(dv)
-    for col in (jfw_col, start_col, pillars_col, vul_col):
+    for col in (jfw_col, start_col, pillars_col, vul_col, mandatory_col):
         dv.add(f"{col}2:{col}{last_row}")
 
     for row in range(2, last_row + 1):
@@ -778,6 +778,7 @@ def evaluate_sunlife_validation(row: pd.Series) -> dict[str, object]:
 
 
 TRAINING_COLUMNS = ["JFW Done", "START Done", "Pillars Done", "VUL Advance Done"]
+EDITABLE_VALIDATION_COLUMNS = TRAINING_COLUMNS + ["Mandatory Training Done"]
 
 
 def required_training_by_row(row: pd.Series) -> dict[str, bool]:
@@ -1622,7 +1623,7 @@ if validation_overrides:
         row_override = validation_overrides.get(row_key)
         if not row_override:
             continue
-        for col in TRAINING_COLUMNS:
+        for col in EDITABLE_VALIDATION_COLUMNS:
             if col in row_override:
                 advisor_validation.at[idx, col] = bool(row_override[col])
 advisor_validation = enforce_training_requirements(advisor_validation)
@@ -2029,6 +2030,10 @@ with details_tab:
         st.caption(
             "Edit training checkboxes below. Validation status updates automatically based on your selections."
         )
+        st.caption(
+            "Note: Mandatory Training is for SM appointment only. "
+            "It affects only `SM Appointment Eligible`, not `Validation Status`, `VNA Eligible`, or `VMP Eligible`."
+        )
         validation_status_filter = st.selectbox(
             "Show validation status",
             options=["All", "Pass", "Fail"],
@@ -2049,6 +2054,7 @@ with details_tab:
             "START Done",
             "Pillars Done",
             "VUL Advance Done",
+            "Mandatory Training Done",
             "Validation Requirement",
             "Validation Status",
             "Validation Reason",
@@ -2092,6 +2098,7 @@ with details_tab:
                 "START Done": st.column_config.CheckboxColumn("START"),
                 "Pillars Done": st.column_config.CheckboxColumn("Pillars"),
                 "VUL Advance Done": st.column_config.CheckboxColumn("VUL Advance"),
+                "Mandatory Training Done": st.column_config.CheckboxColumn("SM Mandatory Training"),
             },
             key="validation_training_editor",
         )
@@ -2102,6 +2109,7 @@ with details_tab:
                 "START Done": bool(row["START Done"]),
                 "Pillars Done": bool(row["Pillars Done"]),
                 "VUL Advance Done": bool(row["VUL Advance Done"]),
+                "Mandatory Training Done": bool(row["Mandatory Training Done"]),
             }
             for _, row in edited_validation.iterrows()
         }
@@ -2117,16 +2125,17 @@ with details_tab:
                     "START Done",
                     "Pillars Done",
                     "VUL Advance Done",
+                    "Mandatory Training Done",
                 ]
             ],
             on="Validation Row Key",
             how="left",
             suffixes=("", "_edited"),
         )
-        for col in TRAINING_COLUMNS:
+        for col in EDITABLE_VALIDATION_COLUMNS:
             advisor_validation[col] = advisor_validation[f"{col}_edited"].fillna(advisor_validation[col]).astype(bool)
         advisor_validation = advisor_validation.drop(
-            columns=[f"{col}_edited" for col in TRAINING_COLUMNS],
+            columns=[f"{col}_edited" for col in EDITABLE_VALIDATION_COLUMNS],
             errors="ignore",
         )
         advisor_validation = enforce_training_requirements(advisor_validation)
