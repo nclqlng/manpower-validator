@@ -175,7 +175,8 @@ def _render_classification_composition_chart(classification_summary: pd.DataFram
 
 def _render_top_advisors_chart(top_advisors: pd.DataFrame, ranking_metric: str) -> None:
     if not _altair_enabled() or top_advisors.empty:
-        st.bar_chart(top_advisors.set_index("Advisor")[["AC", "NSC", "Lives"]], height=330)
+        columns = [c for c in ["AC", "AC Settled", "AC Renewed", "NSC", "Lives"] if c in top_advisors.columns]
+        st.bar_chart(top_advisors.set_index("Advisor")[columns], height=330)
         return
 
     _altair_theme()
@@ -214,6 +215,8 @@ def _render_top_advisors_chart(top_advisors: pd.DataFrame, ranking_metric: str) 
                 alt.Tooltip("Rank:Q"),
                 alt.Tooltip("Advisor:N"),
                 alt.Tooltip("AC:Q", format=",.2f"),
+                alt.Tooltip("AC Settled:Q", format=",.2f"),
+                alt.Tooltip("AC Renewed:Q", format=",.2f"),
                 alt.Tooltip("NSC:Q", format=",.2f"),
                 alt.Tooltip("Lives:Q", format=",.0f"),
             ],
@@ -1557,7 +1560,11 @@ with st.sidebar.container(border=True):
 with st.sidebar.container(border=True):
     st.markdown('<div class="sl-filter-box-title">Ranking</div>', unsafe_allow_html=True)
     top_n = st.slider("Top advisors to show", min_value=5, max_value=30, value=10, step=1)
-    ranking_metric = st.selectbox("Advisor ranking metric", ["AC", "NSC", "Lives"], index=0)
+    ranking_metric_label = st.selectbox(
+        "Advisor ranking metric",
+        ["AC", "AC (Settled)", "AC (Renewed)", "NSC", "Lives"],
+        index=0,
+    )
 
 with st.sidebar.container(border=True):
     st.markdown('<div class="sl-filter-box-title">Performance Targets</div>', unsafe_allow_html=True)
@@ -1582,6 +1589,18 @@ if search_text:
 if filtered.empty:
     st.warning("No rows match your filters.")
     st.stop()
+
+filtered["AC Settled"] = filtered["AC"].where(filtered["Lives"] == 1, 0.0)
+filtered["AC Renewed"] = filtered["AC"].where(filtered["Lives"] == 0, 0.0)
+
+ranking_metric_map = {
+    "AC": "AC",
+    "AC (Settled)": "AC Settled",
+    "AC (Renewed)": "AC Renewed",
+    "NSC": "NSC",
+    "Lives": "Lives",
+}
+ranking_metric = ranking_metric_map.get(ranking_metric_label, "AC")
 
 render_section("3) Results & Story", "Executive summary, drivers, trends, data quality, and exports.")
 
@@ -1609,7 +1628,7 @@ classification_summary = (
 advisor_detail = (
     filtered.groupby(
         ["Period Month", "Period Quarter", "Classification", "Advisor"], dropna=False
-    )[["AC", "NSC", "Lives"]]
+    )[["AC", "AC Settled", "AC Renewed", "NSC", "Lives"]]
     .sum()
     .reset_index()
     .sort_values(["Period Month", "Classification", "Advisor"])
@@ -1799,7 +1818,7 @@ classification_ac_chart = (
 )
 
 top_advisors = (
-    advisor_detail.groupby("Advisor", dropna=False)[["AC", "NSC", "Lives"]]
+    advisor_detail.groupby("Advisor", dropna=False)[["AC", "AC Settled", "AC Renewed", "NSC", "Lives"]]
     .sum()
     .reset_index()
     .sort_values(ranking_metric, ascending=False)
@@ -1847,8 +1866,8 @@ if top_class is not None:
     )
 if top_advisor_row is not None:
     insight_lines.append(
-        f"- Leading advisor by {ranking_metric}: **{top_advisor_row['Advisor']}** "
-        f"with **{ranking_metric} {top_advisor_row[ranking_metric]:,.2f}**."
+        f"- Leading advisor by {ranking_metric_label}: **{top_advisor_row['Advisor']}** "
+        f"with **{ranking_metric_label} {top_advisor_row[ranking_metric]:,.2f}**."
     )
 if previous_month is not None and latest_month is not None:
     trend_word = "up" if (delta_ac is not None and delta_ac >= 0) else "down"
@@ -1916,7 +1935,9 @@ with drivers_tab:
         st.dataframe(class_share, use_container_width=True, height=340)
     with right_col:
         advisor_rank = (
-            advisor_detail.groupby(["Classification", "Advisor"], dropna=False)[["AC", "NSC", "Lives"]]
+            advisor_detail.groupby(["Classification", "Advisor"], dropna=False)[
+                ["AC", "AC Settled", "AC Renewed", "NSC", "Lives"]
+            ]
             .sum()
             .reset_index()
             .sort_values(ranking_metric, ascending=False)
