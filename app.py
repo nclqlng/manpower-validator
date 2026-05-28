@@ -175,7 +175,11 @@ def _render_classification_composition_chart(classification_summary: pd.DataFram
 
 def _render_top_advisors_chart(top_advisors: pd.DataFrame, ranking_metric: str) -> None:
     if not _altair_enabled() or top_advisors.empty:
-        columns = [c for c in ["AC", "AC Settled", "AC Renewed", "NSC", "Lives"] if c in top_advisors.columns]
+        columns = [
+            c
+            for c in ["Total Points", "Score", "AC", "AC Settled", "AC Renewed", "NSC", "Lives"]
+            if c in top_advisors.columns
+        ]
         st.bar_chart(top_advisors.set_index("Advisor")[columns], height=330)
         return
 
@@ -198,6 +202,27 @@ def _render_top_advisors_chart(top_advisors: pd.DataFrame, ranking_metric: str) 
     ]
     rank_colors = [rank_palette_seed[i % len(rank_palette_seed)] for i in range(len(df))]
     rank_domain = df["Rank Label"].tolist()
+    tooltip_specs: list[tuple[str, str]] = [
+        ("Rank", ",.0f"),
+        ("Advisor", ""),
+        ("Total Points", ",.2f"),
+        ("Score", ",.2f"),
+        ("Life Points", ",.2f"),
+        ("AC Points", ",.2f"),
+        ("Settled Lives", ",.0f"),
+        ("AC", ",.2f"),
+        ("AC Settled", ",.2f"),
+        ("AC Renewed", ",.2f"),
+        ("NSC", ",.2f"),
+        ("Lives", ",.0f"),
+        ("Qualified Months", ",.0f"),
+    ]
+    tooltips = [alt.Tooltip("Rank:Q"), alt.Tooltip("Advisor:N")]
+    for column, number_format in tooltip_specs[2:]:
+        if column in df.columns:
+            tooltips.append(
+                alt.Tooltip(f"{column}:Q", format=number_format) if number_format else alt.Tooltip(f"{column}:N")
+            )
 
     chart = (
         alt.Chart(df)
@@ -211,15 +236,7 @@ def _render_top_advisors_chart(top_advisors: pd.DataFrame, ranking_metric: str) 
                 legend=None,
                 scale=alt.Scale(domain=rank_domain, range=rank_colors),
             ),
-            tooltip=[
-                alt.Tooltip("Rank:Q"),
-                alt.Tooltip("Advisor:N"),
-                alt.Tooltip("AC:Q", format=",.2f"),
-                alt.Tooltip("AC Settled:Q", format=",.2f"),
-                alt.Tooltip("AC Renewed:Q", format=",.2f"),
-                alt.Tooltip("NSC:Q", format=",.2f"),
-                alt.Tooltip("Lives:Q", format=",.0f"),
-            ],
+            tooltip=tooltips,
         )
         .properties(height=330)
     )
@@ -348,11 +365,39 @@ render_hero()
 def normalize_number(series: pd.Series) -> pd.Series:
     cleaned = (
         series.astype(str)
+        .str.strip()
         .str.replace(",", "", regex=False)
         .str.replace(" ", "", regex=False)
         .replace({"": "0", "nan": "0", "None": "0"})
     )
+    # European-style thousands: 1.793.940 -> 1793940, 120.000 -> 120000
+    european_mask = cleaned.str.match(r"^\d{1,3}(\.\d{3})+$", na=False)
+    if european_mask.any():
+        cleaned = cleaned.where(
+            ~european_mask,
+            cleaned.str.replace(".", "", regex=False),
+        )
     return pd.to_numeric(cleaned, errors="coerce").fillna(0)
+
+
+def normalize_advisor_key(name: object) -> str:
+    return " ".join(str(name).strip().upper().split())
+
+
+def resolve_submitted_apps_column(
+    columns: list[str],
+    submitted_lives_col: Optional[str] = None,
+) -> Optional[str]:
+    by_name = {str(col).strip(): col for col in columns}
+    if submitted_lives_col:
+        picked = by_name.get(str(submitted_lives_col).strip())
+        if picked is not None:
+            return str(picked)
+    for col in columns:
+        if str(col).strip().lower() == "submitted apps":
+            return str(col)
+    guessed = guess_column(columns, ["submitted apps", "submitted app"])
+    return str(guessed) if guessed else None
 
 
 # ---- 2026 Advisor Code -> Classification mapping (Google Sheets) ----
@@ -566,6 +611,362 @@ def sort_period_labels(labels: list[str], freq: str) -> list[str]:
     if "Unknown" in labels:
         ordered.append("Unknown")
     return ordered
+
+
+SUBMITTED_APPS_SHEET = "Submitted Apps - Details"
+
+
+def load_sheet_from_uploads(
+    file_payloads: list[tuple[str, bytes]],
+    sheet_name: str,
+    header_row: int,
+    requested_range: str,
+    excel_password: str,
+    *,
+    warn_on_skip: bool = True,
+) -> tuple[pd.DataFrame, list[str], list[str]]:
+    loaded_frames: list[pd.DataFrame] = []
+    loaded_file_names: list[str] = []
+    skipped_file_names: list[str] = []
+    for file_name, file_bytes in file_payloads:
+        if is_office_file_encrypted(file_bytes) and not excel_password:
+            if warn_on_skip:
+                st.warning(
+                    f"Skipped `{file_name}` because it appears to be password-protected. "
+                    "Enter the Excel password to load it."
+                )
+            skipped_file_names.append(file_name)
+            continue
+
+        try:
+            prepared_file_bytes, _ = maybe_decrypt_excel_bytes(file_bytes, excel_password)
+        except Exception as e:
+            if warn_on_skip:
+                st.warning(
+                    f"Skipped `{file_name}` because it could not be decrypted with the supplied password: {e}"
+                )
+            skipped_file_names.append(file_name)
+            continue
+
+        kind = detect_excel_kind(prepared_file_bytes)
+        file_lower = (file_name or "").lower()
+        ext = file_lower.rsplit(".", 1)[-1] if "." in file_lower else ""
+        try:
+            if ext in {"xlsx", "xlsm"}:
+                engine_candidates = ["openpyxl"]
+            elif ext == "xls":
+                engine_candidates = ["xlrd", "openpyxl"]
+            elif kind == "xls":
+                engine_candidates = ["xlrd"]
+            elif kind == "xlsx":
+                engine_candidates = ["openpyxl"]
+            else:
+                engine_candidates = ["openpyxl", "xlrd"]
+
+            last_err: Optional[Exception] = None
+            succeeded_engine: Optional[str] = None
+            frame = None
+            for candidate in engine_candidates:
+                file_engine_kwargs = {}
+                try:
+                    frame = pd.read_excel(
+                        io.BytesIO(prepared_file_bytes),
+                        sheet_name=sheet_name,
+                        header=int(header_row) - 1,
+                        engine=candidate,
+                        engine_kwargs=file_engine_kwargs,
+                    )
+                    last_err = None
+                    succeeded_engine = candidate
+                    break
+                except Exception as e:
+                    last_err = e
+                    frame = None
+            if frame is None:
+                raise last_err if last_err else RuntimeError("Unable to read uploaded Excel file.")
+
+            if requested_range:
+                try:
+                    succeeded = False
+                    for candidate in ([succeeded_engine] if succeeded_engine else engine_candidates):
+                        file_engine_kwargs = {}
+                        try:
+                            frame = pd.read_excel(
+                                io.BytesIO(prepared_file_bytes),
+                                sheet_name=sheet_name,
+                                header=int(header_row) - 1,
+                                usecols=requested_range,
+                                engine=candidate,
+                                engine_kwargs=file_engine_kwargs,
+                            )
+                            succeeded = True
+                            break
+                        except Exception:
+                            continue
+                    if not succeeded:
+                        raise RuntimeError("Unable to read requested column range.")
+                except ParserError:
+                    if warn_on_skip:
+                        st.warning(
+                            f"`{file_name}`: column range `{requested_range}` is wider than this sheet. "
+                            "Loaded all available columns instead."
+                        )
+
+            frame = frame.dropna(how="all")
+            frame.columns = [str(c).strip() for c in frame.columns]
+            frame = frame.loc[:, ~pd.Index(frame.columns).str.startswith("Unnamed:")]
+            if not frame.empty:
+                frame["Source File"] = file_name
+                loaded_frames.append(frame)
+                loaded_file_names.append(file_name)
+        except ValueError:
+            skipped_file_names.append(file_name)
+
+    if not loaded_frames:
+        return pd.DataFrame(), loaded_file_names, skipped_file_names
+    return pd.concat(loaded_frames, ignore_index=True, sort=False), loaded_file_names, skipped_file_names
+
+
+def build_submitted_monthly_lives(
+    submitted_raw: pd.DataFrame,
+    advisor_col: str,
+    submitted_lives_col: Optional[str],
+    date_col: Optional[str],
+    month_col: Optional[str],
+    year_col: Optional[str],
+) -> pd.DataFrame:
+    empty = pd.DataFrame(columns=["Advisor", "Advisor Key", "Period Month", "Period Quarter", "Lives Submitted"])
+    if submitted_raw.empty:
+        return empty
+
+    submitted_cols = list(submitted_raw.columns)
+    lives_source = resolve_submitted_apps_column(submitted_cols, submitted_lives_col)
+    if not lives_source or advisor_col not in submitted_cols:
+        return empty
+
+    submitted_rows = submitted_raw.copy()
+    submitted_rows["Advisor"] = submitted_rows[advisor_col].astype(str).str.strip()
+    submitted_rows["Advisor Key"] = submitted_rows["Advisor"].map(normalize_advisor_key)
+    submitted_rows = build_period_columns(submitted_rows, date_col, month_col, year_col)
+    submitted_rows = submitted_rows[
+        submitted_rows["Advisor Key"].ne("")
+        & ~submitted_rows["Advisor"].str.lower().str.contains("total", na=False)
+        & ~submitted_rows["Advisor"].str.lower().isin(["nan", "none"])
+        & submitted_rows["Period Month"].astype(str).ne("Unknown")
+        & submitted_rows["Period Quarter"].astype(str).ne("Unknown")
+    ]
+    # One row = one submitted app. Exclude blank/zero rows and sheet subtotal rows (e.g. row 13 = 120).
+    submitted_flag = normalize_number(submitted_rows[lives_source])
+    submitted_rows = submitted_rows[(submitted_flag > 0) & (submitted_flag <= 50)]
+    if submitted_rows.empty:
+        return empty
+
+    if date_col and date_col in submitted_rows.columns:
+        row_dates = pd.to_datetime(submitted_rows[date_col], errors="coerce")
+        submitted_rows["_row_key"] = (
+            submitted_rows["Advisor Key"] + "|" + row_dates.dt.strftime("%Y-%m-%d").fillna("")
+        )
+    else:
+        submitted_rows["_row_key"] = (
+            submitted_rows["Advisor Key"] + "|" + submitted_rows["Period Month"].astype(str)
+        )
+    submitted_rows = submitted_rows.drop_duplicates(subset=["_row_key"], keep="first")
+    submitted_rows["_app"] = 1
+
+    return (
+        submitted_rows.groupby(
+            ["Advisor", "Advisor Key", "Period Month", "Period Quarter"], dropna=False
+        )["_app"]
+        .sum()
+        .reset_index(name="Lives Submitted")
+    )
+
+
+def compute_advisor_ranking_table(
+    data: pd.DataFrame,
+    ranking_quarter: str,
+    points_per_settled_life: float,
+    settled_ac_amount: float,
+    points_per_settled_ac: float,
+    min_submitted_lives_per_month: float,
+    quarter_to_months: Optional[dict[str, list[str]]] = None,
+    monthly_submitted_lives: Optional[pd.DataFrame] = None,
+) -> pd.DataFrame:
+    quarter_df = data[data["Period Quarter"] == ranking_quarter].copy()
+    empty_columns = [
+        "Advisor",
+        "Settled Lives",
+        "AC Settled",
+        "Submitted Apps (quarter)",
+        "Qualified Months",
+        "Life Points",
+        "AC Points",
+        "Total Points",
+        "AC",
+        "AC Renewed",
+        "NSC",
+        "Lives",
+    ]
+    if quarter_df.empty:
+        return pd.DataFrame(columns=empty_columns)
+
+    if monthly_submitted_lives is None or monthly_submitted_lives.empty:
+        return pd.DataFrame(columns=empty_columns)
+
+    ranking_quarter_label = str(ranking_quarter)
+    submitted_in_quarter = monthly_submitted_lives[
+        monthly_submitted_lives["Period Quarter"].astype(str) == ranking_quarter_label
+    ].copy()
+    if submitted_in_quarter.empty:
+        return pd.DataFrame(columns=empty_columns)
+
+    if quarter_to_months and ranking_quarter_label in quarter_to_months:
+        quarter_months = sort_period_labels(quarter_to_months[ranking_quarter_label], freq="M")
+    else:
+        quarter_months = sort_period_labels(
+            submitted_in_quarter["Period Month"].astype(str).unique().tolist(),
+            freq="M",
+        )
+
+    advisor_totals = (
+        quarter_df.groupby("Advisor", dropna=False)[
+            ["Settled Lives", "AC Settled", "AC", "AC Renewed", "NSC", "Lives"]
+        ]
+        .sum()
+        .reset_index()
+    )
+    advisor_totals["Advisor Key"] = advisor_totals["Advisor"].map(normalize_advisor_key)
+
+    rows: list[dict[str, object]] = []
+    for _, advisor_row in advisor_totals.iterrows():
+        advisor = advisor_row["Advisor"]
+        advisor_key = advisor_row["Advisor Key"]
+        advisor_submitted = submitted_in_quarter[
+            submitted_in_quarter["Advisor Key"] == advisor_key
+        ]
+        qualified_months = [
+            str(month)
+            for month in quarter_months
+            if int(
+                advisor_submitted.loc[
+                    advisor_submitted["Period Month"].astype(str) == str(month),
+                    "Lives Submitted",
+                ].sum()
+            )
+            >= int(math.ceil(min_submitted_lives_per_month))
+        ]
+        if not qualified_months:
+            continue
+
+        qual_mask = (quarter_df["Advisor"] == advisor) & (
+            quarter_df["Period Month"].astype(str).isin(qualified_months)
+        )
+        qual_data = quarter_df.loc[qual_mask]
+
+        settled_lives = float(qual_data["Settled Lives"].sum())
+        settled_ac = float(qual_data["AC Settled"].sum())
+        life_points = settled_lives * points_per_settled_life
+        ac_points = (
+            (settled_ac / settled_ac_amount) * points_per_settled_ac
+            if settled_ac_amount > 0
+            else 0.0
+        )
+        score = life_points + ac_points
+        submitted_apps_in_quarter = int(advisor_submitted["Lives Submitted"].sum())
+
+        rows.append(
+            {
+                "Advisor": advisor,
+                "Settled Lives": settled_lives,
+                "AC Settled": settled_ac,
+                "Submitted Apps (quarter)": submitted_apps_in_quarter,
+                "Qualified Months": len(qualified_months),
+                "Life Points": life_points,
+                "AC Points": ac_points,
+                "Total Points": score,
+                "AC": float(advisor_row["AC"]),
+                "AC Renewed": float(advisor_row["AC Renewed"]),
+                "NSC": float(advisor_row["NSC"]),
+                "Lives": float(advisor_row["Lives"]),
+            }
+        )
+
+    return pd.DataFrame(rows).sort_values("Total Points", ascending=False).reset_index(drop=True)
+
+
+def build_custom_ranking_rules(
+    ranking_quarter: str,
+    points_per_settled_life: float,
+    settled_ac_amount: float,
+    points_per_settled_ac: float,
+    min_submitted_lives_per_month: float,
+) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"Setting": "Ranking quarter", "Value": ranking_quarter},
+            {"Setting": "Points per settled life", "Value": points_per_settled_life},
+            {"Setting": "Settled AC amount per point block", "Value": settled_ac_amount},
+            {"Setting": "Points per settled AC block", "Value": points_per_settled_ac},
+            {"Setting": "Minimum submitted apps per month", "Value": min_submitted_lives_per_month},
+            {
+                "Setting": "Life points formula",
+                "Value": f"Settled Lives × {points_per_settled_life:g}",
+            },
+            {
+                "Setting": "AC points formula",
+                "Value": (
+                    f"(Settled AC ÷ {settled_ac_amount:,.0f}) × {points_per_settled_ac:g}"
+                ),
+            },
+            {"Setting": "Total Points formula", "Value": "Life Points + AC Points"},
+        ]
+    )
+
+
+def format_custom_ranking_table(
+    ranking_df: pd.DataFrame,
+    points_per_settled_life: float,
+    settled_ac_amount: float,
+    points_per_settled_ac: float,
+) -> pd.DataFrame:
+    if ranking_df.empty:
+        return ranking_df.copy()
+    life_col = f"Life Points ({points_per_settled_life:g} pt per settled life)"
+    ac_col = (
+        f"AC Points ({settled_ac_amount:,.0f} settled AC → {points_per_settled_ac:g} pt)"
+    )
+    formatted = ranking_df.rename(
+        columns={
+            "Life Points": life_col,
+            "AC Points": ac_col,
+        }
+    )
+    preferred_order = [
+        "Advisor",
+        "Total Points",
+        life_col,
+        ac_col,
+        "Settled Lives",
+        "AC Settled",
+        "Qualified Months",
+        "Submitted Apps (quarter)",
+        "AC",
+        "AC Renewed",
+        "NSC",
+        "Lives",
+    ]
+    ordered = [col for col in preferred_order if col in formatted.columns]
+    ordered += [col for col in formatted.columns if col not in ordered]
+    return formatted[ordered]
+
+
+def style_total_points_green(ranking_df: pd.DataFrame):
+    if ranking_df.empty or "Total Points" not in ranking_df.columns:
+        return ranking_df.style
+    return ranking_df.style.map(
+        lambda _: "color: #16a34a; font-weight: 600",
+        subset=["Total Points"],
+    )
 
 
 def to_excel_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
@@ -1040,111 +1441,19 @@ column_range = st.text_input(
     help="Optional. Example: A:Z or A:AA. Leave blank to read all available columns.",
 )
 requested_range = column_range.strip()
-loaded_frames = []
-loaded_file_names = []
-skipped_file_names = []
-for file_name, file_bytes in file_payloads:
-    if is_office_file_encrypted(file_bytes) and not excel_password:
-        st.warning(
-            f"Skipped `{file_name}` because it appears to be password-protected. "
-            "Enter the Excel password to load it."
-        )
-        skipped_file_names.append(file_name)
-        continue
-
-    try:
-        prepared_file_bytes, _ = maybe_decrypt_excel_bytes(file_bytes, excel_password)
-    except Exception as e:
-        st.warning(f"Skipped `{file_name}` because it could not be decrypted with the supplied password: {e}")
-        skipped_file_names.append(file_name)
-        continue
-
-    kind = detect_excel_kind(prepared_file_bytes)
-    file_lower = (file_name or "").lower()
-    ext = file_lower.rsplit(".", 1)[-1] if "." in file_lower else ""
-    try:
-        engine_candidates: list[str]
-        if ext in {"xlsx", "xlsm"}:
-            # xlrd does not support .xlsx; keep this path strictly openpyxl.
-            engine_candidates = ["openpyxl"]
-        elif ext == "xls":
-            engine_candidates = ["xlrd", "openpyxl"]
-        elif kind == "xls":
-            engine_candidates = ["xlrd"]
-        elif kind == "xlsx":
-            engine_candidates = ["openpyxl"]
-        else:
-            engine_candidates = ["openpyxl", "xlrd"]
-
-        last_err: Optional[Exception] = None
-        succeeded_engine: Optional[str] = None
-        frame = None
-        for candidate in engine_candidates:
-            file_engine_kwargs = {}
-            try:
-                frame = pd.read_excel(
-                    io.BytesIO(prepared_file_bytes),
-                    sheet_name=sheet,
-                    header=int(header_row) - 1,
-                    engine=candidate,
-                    engine_kwargs=file_engine_kwargs,
-                )
-                last_err = None
-                succeeded_engine = candidate
-                break
-            except Exception as e:
-                last_err = e
-                frame = None
-        if frame is None:
-            raise last_err if last_err else RuntimeError("Unable to read uploaded Excel file.")
-
-        if requested_range:
-            try:
-                # Re-read using the same engine that succeeded above (best-effort).
-                succeeded = False
-                for candidate in ([succeeded_engine] if succeeded_engine else engine_candidates):
-                    file_engine_kwargs = {}
-                    try:
-                        frame = pd.read_excel(
-                            io.BytesIO(prepared_file_bytes),
-                            sheet_name=sheet,
-                            header=int(header_row) - 1,
-                            usecols=requested_range,
-                            engine=candidate,
-                            engine_kwargs=file_engine_kwargs,
-                        )
-                        succeeded = True
-                        break
-                    except Exception:
-                        continue
-                if not succeeded:
-                    raise
-            except ParserError:
-                st.warning(
-                    f"`{file_name}`: column range `{requested_range}` is wider than this sheet. "
-                    "Loaded all available columns instead."
-                )
-        frame = frame.dropna(how="all")
-        frame.columns = [str(c).strip() for c in frame.columns]
-        frame = frame.loc[:, ~pd.Index(frame.columns).str.startswith("Unnamed:")]
-        if not frame.empty:
-            frame["Source File"] = file_name
-            loaded_frames.append(frame)
-            loaded_file_names.append(file_name)
-    except ValueError:
-        skipped_file_names.append(file_name)
+raw_df, loaded_file_names, skipped_file_names = load_sheet_from_uploads(
+    file_payloads,
+    sheet,
+    int(header_row),
+    requested_range,
+    excel_password,
+)
 
 if skipped_file_names:
     st.warning(
         f"Skipped {len(skipped_file_names)} file(s) that do not have sheet `{sheet}`: "
         + ", ".join(skipped_file_names)
     )
-
-if not loaded_frames:
-    st.warning("No valid rows were loaded from uploaded files.")
-    st.stop()
-
-raw_df = pd.concat(loaded_frames, ignore_index=True, sort=False)
 
 if raw_df.empty:
     st.warning("Selected sheet is empty across uploaded files.")
@@ -1229,6 +1538,17 @@ lives_col = st.selectbox(
     key="lives_col",
     help=lives_help,
 )
+submitted_lives_pick = st.selectbox(
+    "Submitted lives column (optional override)",
+    none_opt,
+    index=0,
+    key="submitted_lives_col",
+    help=(
+        f"Custom score counts apps from column H ('Submitted Apps') on "
+        f"'{SUBMITTED_APPS_SHEET}'. Leave as (none) unless that sheet uses a different column name."
+    ),
+)
+submitted_lives_col = None if submitted_lives_pick == "(none)" else submitted_lives_pick
 ac_col = None
 nsc_col = None
 if sheet != "Submitted Apps - Details":
@@ -1393,6 +1713,9 @@ if apply_2026_fix:
 df["AC"] = normalize_number(df[ac_col]) if ac_col else 0
 df["NSC"] = normalize_number(df[nsc_col]) if nsc_col else 0
 df["Lives"] = normalize_number(df[lives_col])
+# Submitted lives for ranking always come from Submitted Apps - Details (not settled columns).
+df["Lives Submitted"] = df["Lives"] if sheet == SUBMITTED_APPS_SHEET else 0.0
+
 df["Tenure Raw"] = df[tenure_col].astype(str).str.strip() if tenure_col else ""
 if coding_validation_col:
     coding_dt = pd.to_datetime(df[coding_validation_col], errors="coerce")
@@ -1413,6 +1736,47 @@ df = df[
     ~df["Advisor"].str.lower().str.contains("total", na=False)
     & ~df["Classification"].str.lower().str.contains("total", na=False)
 ].copy()
+
+submitted_monthly_lives = pd.DataFrame(
+    columns=["Advisor", "Advisor Key", "Period Month", "Period Quarter", "Lives Submitted"]
+)
+if sheet == SUBMITTED_APPS_SHEET:
+    submitted_monthly_lives = build_submitted_monthly_lives(
+        df,
+        advisor_col="Advisor",
+        submitted_lives_col=submitted_lives_col or lives_col,
+        date_col=date_col,
+        month_col=month_col,
+        year_col=year_col,
+    )
+else:
+    # Same uploaded workbook(s) as settled data — read Submitted Apps - Details from each file.
+    submitted_raw, submitted_loaded_names, submitted_skipped_names = load_sheet_from_uploads(
+        file_payloads,
+        SUBMITTED_APPS_SHEET,
+        int(header_row),
+        requested_range,
+        excel_password,
+        warn_on_skip=False,
+    )
+    submitted_monthly_lives = build_submitted_monthly_lives(
+        submitted_raw,
+        advisor_col=advisor_col,
+        submitted_lives_col=submitted_lives_col,
+        date_col=date_col,
+        month_col=month_col,
+        year_col=year_col,
+    )
+    if not submitted_monthly_lives.empty:
+        st.caption(
+            f"Submitted apps for ranking loaded from `{SUBMITTED_APPS_SHEET}` in the same "
+            f"{len(submitted_loaded_names)} uploaded file(s) ({len(submitted_raw):,} rows)."
+        )
+    elif submitted_skipped_names:
+        st.warning(
+            f"Could not read `{SUBMITTED_APPS_SHEET}` from: {', '.join(submitted_skipped_names)}. "
+            "Each uploaded workbook should include that sheet."
+        )
 
 if series_is_mostly_numeric(df["Classification"]):
     st.info(
@@ -1440,7 +1804,7 @@ if "Unknown" in set(df["Period Year"].fillna("Unknown").astype(str)):
 st.sidebar.title("Dashboard Filters")
 with st.sidebar.expander("How to use this dashboard", expanded=False):
     st.markdown(
-        "- Upload one or more files with the same layout.\n"
+        "- Upload one or more workbooks (each should include Settled and Submitted detail sheets).\n"
         "- Pick the target detail sheet and map columns once.\n"
         "- Use filters to focus the story by period/classification.\n"
         "- Download full Excel report with charts and summaries."
@@ -1560,11 +1924,74 @@ with st.sidebar.container(border=True):
 with st.sidebar.container(border=True):
     st.markdown('<div class="sl-filter-box-title">Ranking</div>', unsafe_allow_html=True)
     top_n = st.slider("Top advisors to show", min_value=5, max_value=30, value=10, step=1)
-    ranking_metric_label = st.selectbox(
-        "Advisor ranking metric",
-        ["AC", "AC (Settled)", "AC (Renewed)", "NSC", "Lives"],
-        index=0,
+    ranking_mode = st.radio(
+        "Ranking method",
+        ["Metric", "Custom score"],
+        horizontal=True,
+        help="Metric sorts by one production column. Custom score uses your point rules for a chosen quarter.",
     )
+    default_ranking_quarter = (
+        saved_quarters[-1]
+        if saved_quarters
+        else (quarter_options[-1] if quarter_options else "Unknown")
+    )
+    ranking_metric_label = "Score"
+    ranking_quarter = default_ranking_quarter
+    points_per_settled_life = 1.0
+    settled_ac_amount = 3000.0
+    points_per_settled_ac = 1.0
+    min_submitted_lives_per_month = 1.0
+    if ranking_mode == "Metric":
+        ranking_metric_label = st.selectbox(
+            "Advisor ranking metric",
+            ["AC", "AC (Settled)", "AC (Renewed)", "NSC", "Lives"],
+            index=0,
+        )
+    else:
+        ranking_quarter = st.selectbox(
+            "Ranking quarter",
+            quarter_options,
+            index=quarter_options.index(default_ranking_quarter)
+            if default_ranking_quarter in quarter_options
+            else max(len(quarter_options) - 1, 0),
+        )
+        points_per_settled_life = st.number_input(
+            "Points per settled life",
+            min_value=0.0,
+            value=1.0,
+            step=0.5,
+            help="Example: 1 settled life = 1 point.",
+        )
+        settled_ac_amount = st.number_input(
+            "Settled AC amount per point block",
+            min_value=1.0,
+            value=3000.0,
+            step=500.0,
+            help="Example: 3,000 Settled AC per block.",
+        )
+        points_per_settled_ac = st.number_input(
+            "Points per settled AC block",
+            min_value=0.0,
+            value=1.0,
+            step=0.5,
+            help="Example: 3,000 Settled AC = 1 point (set amount 3000, points 1).",
+        )
+        min_submitted_lives_per_month = st.number_input(
+            "Minimum submitted lives per month",
+            min_value=0.0,
+            value=1.0,
+            step=1.0,
+            help="Only months meeting this submitted-life minimum count toward the score.",
+        )
+        if submitted_monthly_lives.empty:
+            st.caption(
+                f"Custom score needs `{SUBMITTED_APPS_SHEET}` inside each uploaded workbook "
+                "(same files as settled data — no separate upload)."
+            )
+        else:
+            st.caption(
+                f"Submitted apps gate uses `{SUBMITTED_APPS_SHEET}` from your uploaded workbook(s)."
+            )
 
 with st.sidebar.container(border=True):
     st.markdown('<div class="sl-filter-box-title">Performance Targets</div>', unsafe_allow_html=True)
@@ -1592,6 +2019,7 @@ if filtered.empty:
 
 filtered["AC Settled"] = filtered["AC"].where(filtered["Lives"] == 1, 0.0)
 filtered["AC Renewed"] = filtered["AC"].where(filtered["Lives"] == 0, 0.0)
+filtered["Settled Lives"] = filtered["Lives"].where(filtered["Lives"] > 0, 0.0)
 
 ranking_metric_map = {
     "AC": "AC",
@@ -1601,6 +2029,10 @@ ranking_metric_map = {
     "Lives": "Lives",
 }
 ranking_metric = ranking_metric_map.get(ranking_metric_label, "AC")
+use_custom_ranking = ranking_mode == "Custom score"
+if use_custom_ranking:
+    ranking_metric = "Total Points"
+    ranking_metric_label = "Total Points"
 
 render_section("3) Results & Story", "Executive summary, drivers, trends, data quality, and exports.")
 
@@ -1628,7 +2060,7 @@ classification_summary = (
 advisor_detail = (
     filtered.groupby(
         ["Period Month", "Period Quarter", "Classification", "Advisor"], dropna=False
-    )[["AC", "AC Settled", "AC Renewed", "NSC", "Lives"]]
+    )[["AC", "AC Settled", "AC Renewed", "NSC", "Lives", "Settled Lives", "Lives Submitted"]]
     .sum()
     .reset_index()
     .sort_values(["Period Month", "Classification", "Advisor"])
@@ -1817,13 +2249,52 @@ classification_ac_chart = (
     .reindex([m for m in period_months if m in set(monthly_summary["Period Month"])])
 )
 
-top_advisors = (
-    advisor_detail.groupby("Advisor", dropna=False)[["AC", "AC Settled", "AC Renewed", "NSC", "Lives"]]
-    .sum()
-    .reset_index()
-    .sort_values(ranking_metric, ascending=False)
-    .head(top_n)
-)
+custom_ranking_full = pd.DataFrame()
+custom_ranking_rules = pd.DataFrame()
+custom_ranking_export = pd.DataFrame()
+if use_custom_ranking:
+    if submitted_monthly_lives.empty:
+        st.warning(
+            f"Could not load submitted apps from `{SUBMITTED_APPS_SHEET}` in your uploaded workbook(s). "
+            "Each file should include that sheet. Check header row (12), and **Advisor name** / **Date** mapping."
+        )
+    custom_ranking_full = compute_advisor_ranking_table(
+        filtered,
+        ranking_quarter=ranking_quarter,
+        points_per_settled_life=points_per_settled_life,
+        settled_ac_amount=settled_ac_amount,
+        points_per_settled_ac=points_per_settled_ac,
+        min_submitted_lives_per_month=min_submitted_lives_per_month,
+        quarter_to_months=quarter_to_months,
+        monthly_submitted_lives=submitted_monthly_lives,
+    )
+    custom_ranking_rules = build_custom_ranking_rules(
+        ranking_quarter=ranking_quarter,
+        points_per_settled_life=points_per_settled_life,
+        settled_ac_amount=settled_ac_amount,
+        points_per_settled_ac=points_per_settled_ac,
+        min_submitted_lives_per_month=min_submitted_lives_per_month,
+    )
+    custom_ranking_export = format_custom_ranking_table(
+        custom_ranking_full,
+        points_per_settled_life=points_per_settled_life,
+        settled_ac_amount=settled_ac_amount,
+        points_per_settled_ac=points_per_settled_ac,
+    )
+    top_advisors = custom_ranking_full.head(top_n)
+    if not submitted_monthly_lives.empty and custom_ranking_full.empty:
+        st.info(
+            f"No advisors met the threshold of ≥ {min_submitted_lives_per_month:g} submitted app(s) "
+            f"per month in **{ranking_quarter}**."
+        )
+else:
+    top_advisors = (
+        advisor_detail.groupby("Advisor", dropna=False)[["AC", "AC Settled", "AC Renewed", "NSC", "Lives"]]
+        .sum()
+        .reset_index()
+        .sort_values(ranking_metric, ascending=False)
+        .head(top_n)
+    )
 
 top_class = classification_summary.iloc[0] if not classification_summary.empty else None
 top_advisor_row = top_advisors.iloc[0] if not top_advisors.empty else None
@@ -1865,10 +2336,17 @@ if top_class is not None:
         f"**AC {top_class['AC']:,.2f}** ({coverage:.1f}% of total AC)."
     )
 if top_advisor_row is not None:
-    insight_lines.append(
-        f"- Leading advisor by {ranking_metric_label}: **{top_advisor_row['Advisor']}** "
-        f"with **{ranking_metric_label} {top_advisor_row[ranking_metric]:,.2f}**."
-    )
+    if use_custom_ranking:
+        insight_lines.append(
+            f"- Leading advisor in **{ranking_quarter}** by score: **{top_advisor_row['Advisor']}** "
+            f"with **{top_advisor_row['Total Points']:,.2f}** total points "
+            f"({top_advisor_row['Life Points']:,.2f} life + {top_advisor_row['AC Points']:,.2f} AC)."
+        )
+    else:
+        insight_lines.append(
+            f"- Leading advisor by {ranking_metric_label}: **{top_advisor_row['Advisor']}** "
+            f"with **{ranking_metric_label} {top_advisor_row[ranking_metric]:,.2f}**."
+        )
 if previous_month is not None and latest_month is not None:
     trend_word = "up" if (delta_ac is not None and delta_ac >= 0) else "down"
     insight_lines.append(
@@ -1919,9 +2397,28 @@ with story_tab:
             lambda: _render_classification_composition_chart(classification_summary),
         )
     with comp_col2:
+        chart_title = (
+            f"Top {top_n} advisors by total points ({ranking_quarter})"
+            if use_custom_ranking
+            else f"Top {top_n} advisors by {ranking_metric}"
+        )
         render_chart_card(
-            f"Top {top_n} advisors by {ranking_metric}",
+            chart_title,
             lambda: _render_top_advisors_chart(top_advisors, ranking_metric=ranking_metric),
+        )
+    if use_custom_ranking and not top_advisors.empty:
+        st.markdown("**Advisor ranking breakdown**")
+        st.caption(
+            f"Only advisors with ≥ {min_submitted_lives_per_month:g} submitted app(s) in at least one month "
+            f"of **{ranking_quarter}** are listed. "
+            f"Life points = Settled Lives × **{points_per_settled_life:g}**. "
+            f"AC points = (Settled AC ÷ **{settled_ac_amount:,.0f}**) × **{points_per_settled_ac:g}**."
+        )
+        st.dataframe(custom_ranking_rules, use_container_width=True, hide_index=True)
+        st.dataframe(
+            style_total_points_green(custom_ranking_export.head(top_n)),
+            use_container_width=True,
+            hide_index=True,
         )
 
 with drivers_tab:
@@ -1934,16 +2431,24 @@ with drivers_tab:
         )
         st.dataframe(class_share, use_container_width=True, height=340)
     with right_col:
-        advisor_rank = (
-            advisor_detail.groupby(["Classification", "Advisor"], dropna=False)[
-                ["AC", "AC Settled", "AC Renewed", "NSC", "Lives"]
-            ]
-            .sum()
-            .reset_index()
-            .sort_values(ranking_metric, ascending=False)
-            .head(top_n)
-        )
-        st.dataframe(advisor_rank, use_container_width=True, height=340)
+        if use_custom_ranking:
+            st.dataframe(
+                style_total_points_green(custom_ranking_export.head(top_n)),
+                use_container_width=True,
+                height=340,
+            )
+        else:
+            advisor_rank = (
+                advisor_detail.groupby(["Classification", "Advisor"], dropna=False)[
+                    ["AC", "AC Settled", "AC Renewed", "NSC", "Lives"]
+                ]
+                .sum()
+                .reset_index()
+                .sort_values(ranking_metric, ascending=False)
+                .head(top_n)
+            )
+        if not use_custom_ranking:
+            st.dataframe(advisor_rank, use_container_width=True, height=340)
 
 with trends_tab:
     trend_col1, trend_col2 = st.columns(2)
@@ -2224,20 +2729,22 @@ executive_summary = pd.DataFrame(
         {"Metric": "Records", "Value": record_count},
     ]
 )
-export_bytes = to_excel_bytes(
-    {
-        "Executive Summary": executive_summary,
-        "Target Status": status_df,
-        "Data Quality": quality_df,
-        "Monthly Summary": monthly_summary,
-        "Quarterly Summary": quarterly_summary,
-        "Advisor Details": advisor_detail,
-        "Validation Results": advisor_validation.drop(
-            columns=["Validation Row Key", "AC+NSC"], errors="ignore"
-        ),
-        "Filtered Raw Data": filtered,
-    }
-)
+export_sheets: dict[str, pd.DataFrame] = {
+    "Executive Summary": executive_summary,
+    "Target Status": status_df,
+    "Data Quality": quality_df,
+    "Monthly Summary": monthly_summary,
+    "Quarterly Summary": quarterly_summary,
+    "Advisor Details": advisor_detail,
+    "Validation Results": advisor_validation.drop(
+        columns=["Validation Row Key", "AC+NSC"], errors="ignore"
+    ),
+    "Filtered Raw Data": filtered,
+}
+if use_custom_ranking and not custom_ranking_export.empty:
+    export_sheets["Ranking Rules"] = custom_ranking_rules
+    export_sheets["Advisor Ranking"] = custom_ranking_export
+export_bytes = to_excel_bytes(export_sheets)
 
 st.markdown("**Download**")
 download_col1, download_col2 = st.columns(2)
