@@ -209,6 +209,8 @@ def _render_top_advisors_chart(top_advisors: pd.DataFrame, ranking_metric: str) 
         ("Score", ",.2f"),
         ("Life Points", ",.2f"),
         ("AC Points", ",.2f"),
+        ("Settled AC Points", ",.2f"),
+        ("Renewal AC Points", ",.2f"),
         ("Settled Lives", ",.0f"),
         ("AC", ",.2f"),
         ("AC Settled", ",.2f"),
@@ -614,6 +616,8 @@ def sort_period_labels(labels: list[str], freq: str) -> list[str]:
 
 
 SUBMITTED_APPS_SHEET = "Submitted Apps - Details"
+AC_SCORING_TOTAL = "Total AC"
+AC_SCORING_SPLIT = "Settled and Renewal AC"
 
 
 def load_sheet_from_uploads(
@@ -786,8 +790,13 @@ def compute_advisor_ranking_table(
     data: pd.DataFrame,
     ranking_quarter: str,
     points_per_settled_life: float,
+    ac_scoring_mode: str,
+    total_ac_amount: float,
+    points_per_total_ac: float,
     settled_ac_amount: float,
     points_per_settled_ac: float,
+    renewal_ac_amount: float,
+    points_per_renewal_ac: float,
     min_submitted_lives_per_month: float,
     quarter_to_months: Optional[dict[str, list[str]]] = None,
     monthly_submitted_lives: Optional[pd.DataFrame] = None,
@@ -801,6 +810,8 @@ def compute_advisor_ranking_table(
         "Qualified Months",
         "Life Points",
         "AC Points",
+        "Settled AC Points",
+        "Renewal AC Points",
         "Total Points",
         "AC",
         "AC Renewed",
@@ -865,13 +876,31 @@ def compute_advisor_ranking_table(
 
         settled_lives = float(qual_data["Settled Lives"].sum())
         settled_ac = float(qual_data["AC Settled"].sum())
+        renewed_ac = float(qual_data["AC Renewed"].sum())
+        total_ac = float(qual_data["AC"].sum())
         life_points = settled_lives * points_per_settled_life
-        ac_points = (
-            (settled_ac / settled_ac_amount) * points_per_settled_ac
-            if settled_ac_amount > 0
-            else 0.0
-        )
-        score = life_points + ac_points
+        ac_points = 0.0
+        settled_ac_points = 0.0
+        renewal_ac_points = 0.0
+        if ac_scoring_mode == AC_SCORING_TOTAL:
+            ac_points = (
+                (total_ac / total_ac_amount) * points_per_total_ac
+                if total_ac_amount > 0
+                else 0.0
+            )
+            score = life_points + ac_points
+        else:
+            settled_ac_points = (
+                (settled_ac / settled_ac_amount) * points_per_settled_ac
+                if settled_ac_amount > 0
+                else 0.0
+            )
+            renewal_ac_points = (
+                (renewed_ac / renewal_ac_amount) * points_per_renewal_ac
+                if renewal_ac_amount > 0
+                else 0.0
+            )
+            score = life_points + settled_ac_points + renewal_ac_points
         submitted_apps_in_quarter = int(advisor_submitted["Lives Submitted"].sum())
 
         rows.append(
@@ -883,6 +912,8 @@ def compute_advisor_ranking_table(
                 "Qualified Months": len(qualified_months),
                 "Life Points": life_points,
                 "AC Points": ac_points,
+                "Settled AC Points": settled_ac_points,
+                "Renewal AC Points": renewal_ac_points,
                 "Total Points": score,
                 "AC": float(advisor_row["AC"]),
                 "AC Renewed": float(advisor_row["AC Renewed"]),
@@ -897,64 +928,108 @@ def compute_advisor_ranking_table(
 def build_custom_ranking_rules(
     ranking_quarter: str,
     points_per_settled_life: float,
+    ac_scoring_mode: str,
+    total_ac_amount: float,
+    points_per_total_ac: float,
     settled_ac_amount: float,
     points_per_settled_ac: float,
+    renewal_ac_amount: float,
+    points_per_renewal_ac: float,
     min_submitted_lives_per_month: float,
 ) -> pd.DataFrame:
-    return pd.DataFrame(
-        [
-            {"Setting": "Ranking quarter", "Value": ranking_quarter},
-            {"Setting": "Points per settled life", "Value": points_per_settled_life},
-            {"Setting": "Settled AC amount per point block", "Value": settled_ac_amount},
-            {"Setting": "Points per settled AC block", "Value": points_per_settled_ac},
-            {"Setting": "Minimum submitted apps per month", "Value": min_submitted_lives_per_month},
-            {
-                "Setting": "Life points formula",
-                "Value": f"Settled Lives × {points_per_settled_life:g}",
-            },
-            {
-                "Setting": "AC points formula",
-                "Value": (
-                    f"(Settled AC ÷ {settled_ac_amount:,.0f}) × {points_per_settled_ac:g}"
-                ),
-            },
-            {"Setting": "Total Points formula", "Value": "Life Points + AC Points"},
-        ]
-    )
+    rules: list[dict[str, object]] = [
+        {"Setting": "Ranking quarter", "Value": ranking_quarter},
+        {"Setting": "AC scoring mode", "Value": ac_scoring_mode},
+        {"Setting": "Points per settled life", "Value": points_per_settled_life},
+        {"Setting": "Minimum submitted apps per month", "Value": min_submitted_lives_per_month},
+        {
+            "Setting": "Life points formula",
+            "Value": f"Settled Lives × {points_per_settled_life:g}",
+        },
+    ]
+    if ac_scoring_mode == AC_SCORING_TOTAL:
+        rules.extend(
+            [
+                {"Setting": "Total AC amount per point block", "Value": total_ac_amount},
+                {"Setting": "Points per total AC block", "Value": points_per_total_ac},
+                {
+                    "Setting": "AC points formula",
+                    "Value": f"(Total AC ÷ {total_ac_amount:,.0f}) × {points_per_total_ac:g}",
+                },
+                {"Setting": "Total Points formula", "Value": "Life Points + AC Points"},
+            ]
+        )
+    else:
+        rules.extend(
+            [
+                {"Setting": "Settled AC amount per point block", "Value": settled_ac_amount},
+                {"Setting": "Points per settled AC block", "Value": points_per_settled_ac},
+                {"Setting": "Renewal AC amount per point block", "Value": renewal_ac_amount},
+                {"Setting": "Points per renewal AC block", "Value": points_per_renewal_ac},
+                {
+                    "Setting": "Settled AC points formula",
+                    "Value": (
+                        f"(Settled AC ÷ {settled_ac_amount:,.0f}) × {points_per_settled_ac:g}"
+                    ),
+                },
+                {
+                    "Setting": "Renewal AC points formula",
+                    "Value": (
+                        f"(Renewal AC ÷ {renewal_ac_amount:,.0f}) × {points_per_renewal_ac:g}"
+                    ),
+                },
+                {
+                    "Setting": "Total Points formula",
+                    "Value": "Life Points + Settled AC Points + Renewal AC Points",
+                },
+            ]
+        )
+    return pd.DataFrame(rules)
 
 
 def format_custom_ranking_table(
     ranking_df: pd.DataFrame,
     points_per_settled_life: float,
+    ac_scoring_mode: str,
+    total_ac_amount: float,
+    points_per_total_ac: float,
     settled_ac_amount: float,
     points_per_settled_ac: float,
+    renewal_ac_amount: float,
+    points_per_renewal_ac: float,
 ) -> pd.DataFrame:
     if ranking_df.empty:
         return ranking_df.copy()
     life_col = f"Life Points ({points_per_settled_life:g} pt per settled life)"
-    ac_col = (
-        f"AC Points ({settled_ac_amount:,.0f} settled AC → {points_per_settled_ac:g} pt)"
+    rename_map = {"Life Points": life_col}
+    preferred_order = ["Advisor", "Total Points", life_col]
+    if ac_scoring_mode == AC_SCORING_TOTAL:
+        ac_col = f"AC Points ({total_ac_amount:,.0f} total AC → {points_per_total_ac:g} pt)"
+        rename_map["AC Points"] = ac_col
+        preferred_order.append(ac_col)
+    else:
+        settled_ac_col = (
+            f"Settled AC Points ({settled_ac_amount:,.0f} AC → {points_per_settled_ac:g} pt)"
+        )
+        renewal_ac_col = (
+            f"Renewal AC Points ({renewal_ac_amount:,.0f} AC → {points_per_renewal_ac:g} pt)"
+        )
+        rename_map["Settled AC Points"] = settled_ac_col
+        rename_map["Renewal AC Points"] = renewal_ac_col
+        preferred_order.extend([settled_ac_col, renewal_ac_col])
+    formatted = ranking_df.rename(columns=rename_map)
+    preferred_order.extend(
+        [
+            "Settled Lives",
+            "AC Settled",
+            "Qualified Months",
+            "Submitted Apps (quarter)",
+            "AC",
+            "AC Renewed",
+            "NSC",
+            "Lives",
+        ]
     )
-    formatted = ranking_df.rename(
-        columns={
-            "Life Points": life_col,
-            "AC Points": ac_col,
-        }
-    )
-    preferred_order = [
-        "Advisor",
-        "Total Points",
-        life_col,
-        ac_col,
-        "Settled Lives",
-        "AC Settled",
-        "Qualified Months",
-        "Submitted Apps (quarter)",
-        "AC",
-        "AC Renewed",
-        "NSC",
-        "Lives",
-    ]
     ordered = [col for col in preferred_order if col in formatted.columns]
     ordered += [col for col in formatted.columns if col not in ordered]
     return formatted[ordered]
@@ -1935,11 +2010,16 @@ with st.sidebar.container(border=True):
         if saved_quarters
         else (quarter_options[-1] if quarter_options else "Unknown")
     )
-    ranking_metric_label = "Score"
+    ranking_metric_label = "Total Points"
     ranking_quarter = default_ranking_quarter
     points_per_settled_life = 1.0
+    ac_scoring_mode = AC_SCORING_SPLIT
+    total_ac_amount = 3000.0
+    points_per_total_ac = 1.0
     settled_ac_amount = 3000.0
     points_per_settled_ac = 1.0
+    renewal_ac_amount = 3000.0
+    points_per_renewal_ac = 1.0
     min_submitted_lives_per_month = 1.0
     if ranking_mode == "Metric":
         ranking_metric_label = st.selectbox(
@@ -1962,20 +2042,56 @@ with st.sidebar.container(border=True):
             step=0.5,
             help="Example: 1 settled life = 1 point.",
         )
-        settled_ac_amount = st.number_input(
-            "Settled AC amount per point block",
-            min_value=1.0,
-            value=3000.0,
-            step=500.0,
-            help="Example: 3,000 Settled AC per block.",
+        ac_scoring_mode = st.radio(
+            "AC scoring",
+            [AC_SCORING_TOTAL, AC_SCORING_SPLIT],
+            index=1,
+            help="Use total AC as one block, or score settled AC and renewal AC separately.",
         )
-        points_per_settled_ac = st.number_input(
-            "Points per settled AC block",
-            min_value=0.0,
-            value=1.0,
-            step=0.5,
-            help="Example: 3,000 Settled AC = 1 point (set amount 3000, points 1).",
-        )
+        if ac_scoring_mode == AC_SCORING_TOTAL:
+            total_ac_amount = st.number_input(
+                "Total AC amount per point block",
+                min_value=1.0,
+                value=3000.0,
+                step=500.0,
+                help="Example: 3,000 total AC per block.",
+            )
+            points_per_total_ac = st.number_input(
+                "Points per total AC block",
+                min_value=0.0,
+                value=1.0,
+                step=0.5,
+                help="Example: 3,000 total AC = 1 point.",
+            )
+        else:
+            settled_ac_amount = st.number_input(
+                "Settled AC amount per point block",
+                min_value=1.0,
+                value=3000.0,
+                step=500.0,
+                help="Example: 3,000 Settled AC per block.",
+            )
+            points_per_settled_ac = st.number_input(
+                "Points per settled AC block",
+                min_value=0.0,
+                value=1.0,
+                step=0.5,
+                help="Example: 3,000 Settled AC = 1 point.",
+            )
+            renewal_ac_amount = st.number_input(
+                "Renewal AC amount per point block",
+                min_value=1.0,
+                value=3000.0,
+                step=500.0,
+                help="Example: 3,000 Renewal AC per block.",
+            )
+            points_per_renewal_ac = st.number_input(
+                "Points per renewal AC block",
+                min_value=0.0,
+                value=1.0,
+                step=0.5,
+                help="Example: 3,000 Renewal AC = 1 point.",
+            )
         min_submitted_lives_per_month = st.number_input(
             "Minimum submitted lives per month",
             min_value=0.0,
@@ -2262,8 +2378,13 @@ if use_custom_ranking:
         filtered,
         ranking_quarter=ranking_quarter,
         points_per_settled_life=points_per_settled_life,
+        ac_scoring_mode=ac_scoring_mode,
+        total_ac_amount=total_ac_amount,
+        points_per_total_ac=points_per_total_ac,
         settled_ac_amount=settled_ac_amount,
         points_per_settled_ac=points_per_settled_ac,
+        renewal_ac_amount=renewal_ac_amount,
+        points_per_renewal_ac=points_per_renewal_ac,
         min_submitted_lives_per_month=min_submitted_lives_per_month,
         quarter_to_months=quarter_to_months,
         monthly_submitted_lives=submitted_monthly_lives,
@@ -2271,15 +2392,25 @@ if use_custom_ranking:
     custom_ranking_rules = build_custom_ranking_rules(
         ranking_quarter=ranking_quarter,
         points_per_settled_life=points_per_settled_life,
+        ac_scoring_mode=ac_scoring_mode,
+        total_ac_amount=total_ac_amount,
+        points_per_total_ac=points_per_total_ac,
         settled_ac_amount=settled_ac_amount,
         points_per_settled_ac=points_per_settled_ac,
+        renewal_ac_amount=renewal_ac_amount,
+        points_per_renewal_ac=points_per_renewal_ac,
         min_submitted_lives_per_month=min_submitted_lives_per_month,
     )
     custom_ranking_export = format_custom_ranking_table(
         custom_ranking_full,
         points_per_settled_life=points_per_settled_life,
+        ac_scoring_mode=ac_scoring_mode,
+        total_ac_amount=total_ac_amount,
+        points_per_total_ac=points_per_total_ac,
         settled_ac_amount=settled_ac_amount,
         points_per_settled_ac=points_per_settled_ac,
+        renewal_ac_amount=renewal_ac_amount,
+        points_per_renewal_ac=points_per_renewal_ac,
     )
     top_advisors = custom_ranking_full.head(top_n)
     if not submitted_monthly_lives.empty and custom_ranking_full.empty:
@@ -2337,10 +2468,17 @@ if top_class is not None:
     )
 if top_advisor_row is not None:
     if use_custom_ranking:
+        if ac_scoring_mode == AC_SCORING_TOTAL:
+            ac_breakdown = f"{top_advisor_row['AC Points']:,.2f} AC"
+        else:
+            ac_breakdown = (
+                f"{top_advisor_row['Settled AC Points']:,.2f} settled AC + "
+                f"{top_advisor_row['Renewal AC Points']:,.2f} renewal AC"
+            )
         insight_lines.append(
             f"- Leading advisor in **{ranking_quarter}** by score: **{top_advisor_row['Advisor']}** "
             f"with **{top_advisor_row['Total Points']:,.2f}** total points "
-            f"({top_advisor_row['Life Points']:,.2f} life + {top_advisor_row['AC Points']:,.2f} AC)."
+            f"({top_advisor_row['Life Points']:,.2f} life + {ac_breakdown})."
         )
     else:
         insight_lines.append(
@@ -2408,11 +2546,18 @@ with story_tab:
         )
     if use_custom_ranking and not top_advisors.empty:
         st.markdown("**Advisor ranking breakdown**")
+        ac_caption = (
+            f"AC points = (Total AC ÷ **{total_ac_amount:,.0f}**) × **{points_per_total_ac:g}**."
+            if ac_scoring_mode == AC_SCORING_TOTAL
+            else (
+                f"Settled AC points = (Settled AC ÷ **{settled_ac_amount:,.0f}**) × **{points_per_settled_ac:g}**. "
+                f"Renewal AC points = (Renewal AC ÷ **{renewal_ac_amount:,.0f}**) × **{points_per_renewal_ac:g}**."
+            )
+        )
         st.caption(
             f"Only advisors with ≥ {min_submitted_lives_per_month:g} submitted app(s) in at least one month "
             f"of **{ranking_quarter}** are listed. "
-            f"Life points = Settled Lives × **{points_per_settled_life:g}**. "
-            f"AC points = (Settled AC ÷ **{settled_ac_amount:,.0f}**) × **{points_per_settled_ac:g}**."
+            f"Life points = Settled Lives × **{points_per_settled_life:g}**. {ac_caption}"
         )
         st.dataframe(custom_ranking_rules, use_container_width=True, hide_index=True)
         st.dataframe(
