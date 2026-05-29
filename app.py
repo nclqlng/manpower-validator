@@ -12,6 +12,7 @@ from urllib.request import urlopen
 import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
+from openpyxl.styles import Font
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.utils import get_column_letter
 from pandas.errors import ParserError
@@ -1000,48 +1001,104 @@ def format_custom_ranking_table(
 ) -> pd.DataFrame:
     if ranking_df.empty:
         return ranking_df.copy()
-    life_col = f"Life Points ({points_per_settled_life:g} pt per settled life)"
+
+    life_col = (
+        f"Life Points ({points_per_settled_life:g} settled life"
+        f" → {points_per_settled_life:g} pt)"
+    )
     rename_map = {"Life Points": life_col}
-    preferred_order = ["Advisor", "Total Points", life_col]
     if ac_scoring_mode == AC_SCORING_TOTAL:
-        ac_col = f"AC Points ({total_ac_amount:,.0f} total AC → {points_per_total_ac:g} pt)"
+        ac_col = (
+            f"AC Points ({total_ac_amount:,.0f} total AC"
+            f" → {points_per_total_ac:g} pt)"
+        )
         rename_map["AC Points"] = ac_col
-        preferred_order.append(ac_col)
+        preferred_order = [
+            "Advisor",
+            "Settled Lives",
+            life_col,
+            "AC Settled",
+            "AC Renewed",
+            "AC",
+            ac_col,
+            "Submitted Apps (quarter)",
+            "Qualified Months",
+            "Total Points",
+        ]
     else:
         settled_ac_col = (
-            f"Settled AC Points ({settled_ac_amount:,.0f} AC → {points_per_settled_ac:g} pt)"
+            f"Settled AC Points ({settled_ac_amount:,.0f} settled AC"
+            f" → {points_per_settled_ac:g} pt)"
         )
         renewal_ac_col = (
-            f"Renewal AC Points ({renewal_ac_amount:,.0f} AC → {points_per_renewal_ac:g} pt)"
+            f"Renewal AC Points ({renewal_ac_amount:,.0f} renewal AC"
+            f" → {points_per_renewal_ac:g} pt)"
         )
         rename_map["Settled AC Points"] = settled_ac_col
         rename_map["Renewal AC Points"] = renewal_ac_col
-        preferred_order.extend([settled_ac_col, renewal_ac_col])
-    formatted = ranking_df.rename(columns=rename_map)
-    preferred_order.extend(
-        [
+        preferred_order = [
+            "Advisor",
             "Settled Lives",
+            life_col,
             "AC Settled",
-            "Qualified Months",
-            "Submitted Apps (quarter)",
-            "AC",
+            settled_ac_col,
             "AC Renewed",
-            "NSC",
-            "Lives",
+            renewal_ac_col,
+            "Submitted Apps (quarter)",
+            "Qualified Months",
+            "Total Points",
         ]
-    )
+
+    formatted = ranking_df.rename(columns=rename_map)
     ordered = [col for col in preferred_order if col in formatted.columns]
-    ordered += [col for col in formatted.columns if col not in ordered]
-    return formatted[ordered]
+    formatted = formatted[ordered].reset_index(drop=True)
+    formatted.insert(0, "Rank #", formatted.index + 1)
+    return formatted
 
 
-def style_total_points_green(ranking_df: pd.DataFrame):
-    if ranking_df.empty or "Total Points" not in ranking_df.columns:
+def style_custom_ranking_display(ranking_df: pd.DataFrame):
+    if ranking_df.empty:
         return ranking_df.style
-    return ranking_df.style.map(
-        lambda _: "color: #16a34a; font-weight: 600",
-        subset=["Total Points"],
-    )
+
+    point_cols = [
+        col
+        for col in ranking_df.columns
+        if "Points" in str(col) and str(col) != "Total Points"
+    ]
+    styler = ranking_df.style
+    if point_cols:
+        styler = styler.map(
+            lambda _: "color: #2563eb; font-weight: 600",
+            subset=point_cols,
+        )
+    if "Total Points" in ranking_df.columns:
+        styler = styler.map(
+            lambda _: "color: #16a34a; font-weight: 700",
+            subset=["Total Points"],
+        )
+    return styler
+
+
+def _style_advisor_ranking_excel_sheet(ws) -> None:
+    headers = [cell.value for cell in ws[1]]
+    if not headers:
+        return
+
+    blue_font = Font(color="2563EB", bold=True)
+    green_font = Font(color="16A34A", bold=True)
+    for col_idx, header in enumerate(headers, start=1):
+        if header is None:
+            continue
+        header_text = str(header)
+        if header_text == "Total Points":
+            cell_font = green_font
+        elif "Points" in header_text:
+            cell_font = blue_font
+        else:
+            continue
+        col_letter = get_column_letter(col_idx)
+        for row_idx in range(2, ws.max_row + 1):
+            ws[f"{col_letter}{row_idx}"].font = cell_font
 
 
 def to_excel_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
@@ -1050,9 +1107,11 @@ def to_excel_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
         for sheet_name, data in sheets.items():
             sheet_title = sheet_name[:31]
             data.to_excel(writer, index=False, sheet_name=sheet_title)
+            ws = writer.book[sheet_title]
             if sheet_title == "Validation Results":
-                ws = writer.book[sheet_title]
                 _add_validation_results_excel_logic(ws)
+            elif sheet_title == "Advisor Ranking":
+                _style_advisor_ranking_excel_sheet(ws)
     return buffer.getvalue()
 
 
@@ -2561,7 +2620,7 @@ with story_tab:
         )
         st.dataframe(custom_ranking_rules, use_container_width=True, hide_index=True)
         st.dataframe(
-            style_total_points_green(custom_ranking_export.head(top_n)),
+            style_custom_ranking_display(custom_ranking_export.head(top_n)),
             use_container_width=True,
             hide_index=True,
         )
@@ -2578,7 +2637,7 @@ with drivers_tab:
     with right_col:
         if use_custom_ranking:
             st.dataframe(
-                style_total_points_green(custom_ranking_export.head(top_n)),
+                style_custom_ranking_display(custom_ranking_export.head(top_n)),
                 use_container_width=True,
                 height=340,
             )
@@ -2886,9 +2945,10 @@ export_sheets: dict[str, pd.DataFrame] = {
     ),
     "Filtered Raw Data": filtered,
 }
-if use_custom_ranking and not custom_ranking_export.empty:
+if use_custom_ranking:
     export_sheets["Ranking Rules"] = custom_ranking_rules
-    export_sheets["Advisor Ranking"] = custom_ranking_export
+    if not custom_ranking_export.empty:
+        export_sheets["Advisor Ranking"] = custom_ranking_export
 export_bytes = to_excel_bytes(export_sheets)
 
 st.markdown("**Download**")
