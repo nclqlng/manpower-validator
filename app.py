@@ -142,6 +142,7 @@ def _render_monthly_momentum_chart(monthly_kpi: pd.DataFrame) -> None:
 
 
 def _render_classification_composition_chart(classification_summary: pd.DataFrame) -> None:
+    classification_summary = drop_unit_dimension_for_charts(classification_summary)
     if not _altair_enabled() or classification_summary.empty:
         st.bar_chart(
             classification_summary.set_index("Classification")[["AC", "NSC", "Lives"]],
@@ -248,6 +249,7 @@ def _render_top_advisors_chart(top_advisors: pd.DataFrame, ranking_metric: str) 
 
 
 def _render_monthly_ac_by_classification(monthly_summary: pd.DataFrame, ordered_months: list[str]) -> None:
+    monthly_summary = drop_unit_dimension_for_charts(monthly_summary, period_col="Period Month")
     if not _altair_enabled() or monthly_summary.empty:
         pivot = (
             monthly_summary.pivot(index="Period Month", columns="Classification", values="AC")
@@ -385,6 +387,61 @@ def normalize_number(series: pd.Series) -> pd.Series:
 
 def normalize_advisor_key(name: object) -> str:
     return " ".join(str(name).strip().upper().split())
+
+
+def first_non_empty_unit(series: pd.Series) -> str:
+    for value in series.astype(str):
+        cleaned = str(value).strip()
+        if cleaned and cleaned.lower() not in {"nan", "none"}:
+            return cleaned
+    return "Unknown"
+
+
+def advisor_unit_lookup(data: pd.DataFrame) -> dict[str, str]:
+    if data.empty or "Unit" not in data.columns or "Advisor" not in data.columns:
+        return {}
+    return (
+        data.groupby("Advisor", dropna=False)["Unit"]
+        .apply(first_non_empty_unit)
+        .to_dict()
+    )
+
+
+def drop_unit_dimension_for_charts(
+    df: pd.DataFrame,
+    *,
+    period_col: Optional[str] = None,
+) -> pd.DataFrame:
+    if "Unit" not in df.columns:
+        return df
+    metric_cols = [c for c in ["AC", "NSC", "Lives"] if c in df.columns]
+    group_cols = [c for c in [period_col, "Classification"] if c and c in df.columns]
+    if not group_cols:
+        group_cols = ["Classification"]
+    return df.groupby(group_cols, dropna=False)[metric_cols].sum().reset_index()
+
+
+def insert_unit_after_advisor(
+    df: pd.DataFrame,
+    unit_lookup: dict[str, str],
+    *,
+    advisor_col: str = "Advisor",
+    unit_col: str = "Unit",
+) -> pd.DataFrame:
+    if df.empty or advisor_col not in df.columns:
+        return df
+    out = df.copy()
+    if unit_col not in out.columns:
+        out.insert(
+            out.columns.get_loc(advisor_col) + 1,
+            unit_col,
+            out[advisor_col].map(unit_lookup).fillna("Unknown"),
+        )
+    else:
+        cols = [c for c in out.columns if c != unit_col]
+        cols.insert(cols.index(advisor_col) + 1, unit_col)
+        out = out[cols]
+    return out
 
 
 def resolve_submitted_apps_column(
@@ -805,6 +862,7 @@ def compute_advisor_ranking_table(
     quarter_df = data[data["Period Quarter"] == ranking_quarter].copy()
     empty_columns = [
         "Advisor",
+        "Unit",
         "Settled Lives",
         "AC Settled",
         "Submitted Apps (quarter)",
@@ -840,6 +898,7 @@ def compute_advisor_ranking_table(
             freq="M",
         )
 
+    advisor_units = quarter_df.groupby("Advisor", dropna=False)["Unit"].apply(first_non_empty_unit)
     advisor_totals = (
         quarter_df.groupby("Advisor", dropna=False)[
             ["Settled Lives", "AC Settled", "AC", "AC Renewed", "NSC", "Lives"]
@@ -907,6 +966,7 @@ def compute_advisor_ranking_table(
         rows.append(
             {
                 "Advisor": advisor,
+                "Unit": advisor_units.get(advisor, "Unknown"),
                 "Settled Lives": settled_lives,
                 "AC Settled": settled_ac,
                 "Submitted Apps (quarter)": submitted_apps_in_quarter,
@@ -1015,6 +1075,7 @@ def format_custom_ranking_table(
         rename_map["AC Points"] = ac_col
         preferred_order = [
             "Advisor",
+            "Unit",
             "Settled Lives",
             life_col,
             "AC Settled",
@@ -1038,6 +1099,7 @@ def format_custom_ranking_table(
         rename_map["Renewal AC Points"] = renewal_ac_col
         preferred_order = [
             "Advisor",
+            "Unit",
             "Settled Lives",
             life_col,
             "AC Settled",
@@ -1772,6 +1834,8 @@ if not date_col and not (month_col and year_col):
 
 with st.expander("Preview mapped columns"):
     preview_cols = [advisor_col, class_col, lives_col]
+    if "Unit" in raw_df.columns:
+        preview_cols.insert(1, "Unit")
     if ac_col:
         preview_cols.append(ac_col)
     if nsc_col:
@@ -1950,10 +2014,10 @@ with st.sidebar.container(border=True):
     st.caption("Unit")
     selected_units = st.multiselect("Unit", units, default=units, label_visibility="collapsed")
     search_term = st.text_input(
-        "Search advisor or classification",
+        "Search advisor, unit, or classification",
         value="",
-        placeholder="Type advisor name or class...",
-        help="Quickly filter dashboard records by advisor name or classification.",
+        placeholder="Type advisor, unit, or class...",
+        help="Quickly filter dashboard records by advisor name, unit, or classification.",
     )
 # Build year<->quarter<->month links from available data.
 period_pairs = (
@@ -2186,7 +2250,8 @@ search_text = search_term.strip().lower()
 if search_text:
     advisor_match = filtered["Advisor"].astype(str).str.lower().str.contains(search_text, na=False)
     class_match = filtered["Classification"].astype(str).str.lower().str.contains(search_text, na=False)
-    filtered = filtered[advisor_match | class_match].copy()
+    unit_match = filtered["Unit"].astype(str).str.lower().str.contains(search_text, na=False)
+    filtered = filtered[advisor_match | class_match | unit_match].copy()
 
 if filtered.empty:
     st.warning("No rows match your filters.")
@@ -2211,34 +2276,36 @@ if use_custom_ranking:
 
 render_section("3) Results & Story", "Executive summary, drivers, trends, data quality, and exports.")
 
+unit_lookup = advisor_unit_lookup(filtered)
+
 monthly_summary = (
-    filtered.groupby(["Period Month", "Classification"], dropna=False)[["AC", "NSC", "Lives"]]
+    filtered.groupby(["Period Month", "Unit", "Classification"], dropna=False)[["AC", "NSC", "Lives"]]
     .sum()
     .reset_index()
-    .sort_values(["Period Month", "Classification"])
+    .sort_values(["Period Month", "Unit", "Classification"])
 )
 
 quarterly_summary = (
-    filtered.groupby(["Period Quarter", "Classification"], dropna=False)[["AC", "NSC", "Lives"]]
+    filtered.groupby(["Period Quarter", "Unit", "Classification"], dropna=False)[["AC", "NSC", "Lives"]]
     .sum()
     .reset_index()
-    .sort_values(["Period Quarter", "Classification"])
+    .sort_values(["Period Quarter", "Unit", "Classification"])
 )
 
 classification_summary = (
-    filtered.groupby("Classification", dropna=False)[["AC", "NSC", "Lives"]]
+    filtered.groupby(["Unit", "Classification"], dropna=False)[["AC", "NSC", "Lives"]]
     .sum()
     .reset_index()
-    .sort_values("AC", ascending=False)
+    .sort_values(["Unit", "AC"], ascending=[True, False])
 )
 
 advisor_detail = (
     filtered.groupby(
-        ["Period Month", "Period Quarter", "Classification", "Advisor"], dropna=False
+        ["Period Month", "Period Quarter", "Unit", "Classification", "Advisor"], dropna=False
     )[["AC", "AC Settled", "AC Renewed", "NSC", "Lives", "Settled Lives", "Lives Submitted"]]
     .sum()
     .reset_index()
-    .sort_values(["Period Month", "Classification", "Advisor"])
+    .sort_values(["Period Month", "Unit", "Classification", "Advisor"])
 )
 
 validation_base = filtered.copy()
@@ -2247,6 +2314,7 @@ advisor_validation = (
     validation_base.groupby(["Advisor", "Classification"], dropna=False)
     .agg(
         {
+            "Unit": "first",
             "Tenure Raw": "first",
             "Coding Quarter": "max",
             "AC": "sum",
@@ -2262,6 +2330,9 @@ advisor_validation = (
     )
     .reset_index()
 )
+advisor_validation["Unit"] = advisor_validation["Unit"].fillna(
+    advisor_validation["Advisor"].map(unit_lookup)
+).fillna("Unknown")
 validation_cols = advisor_validation.apply(evaluate_sunlife_validation, axis=1, result_type="expand")
 advisor_validation = pd.concat([advisor_validation, validation_cols], axis=1).sort_values(
     ["Validation Status", "AC+NSC", "Advisor"], ascending=[True, False, True]
@@ -2419,7 +2490,8 @@ status_df = pd.DataFrame(
 )
 
 classification_ac_chart = (
-    monthly_summary.pivot(index="Period Month", columns="Classification", values="AC")
+    drop_unit_dimension_for_charts(monthly_summary, period_col="Period Month")
+    .pivot(index="Period Month", columns="Classification", values="AC")
     .fillna(0)
     .reindex([m for m in period_months if m in set(monthly_summary["Period Month"])])
 )
@@ -2478,15 +2550,19 @@ if use_custom_ranking:
             f"per month in **{ranking_quarter}**."
         )
 else:
-    top_advisors = (
+    top_advisors = insert_unit_after_advisor(
         advisor_detail.groupby("Advisor", dropna=False)[["AC", "AC Settled", "AC Renewed", "NSC", "Lives"]]
         .sum()
         .reset_index()
         .sort_values(ranking_metric, ascending=False)
-        .head(top_n)
+        .head(top_n),
+        unit_lookup,
     )
 
-top_class = classification_summary.iloc[0] if not classification_summary.empty else None
+classification_totals = drop_unit_dimension_for_charts(classification_summary).sort_values(
+    "AC", ascending=False
+)
+top_class = classification_totals.iloc[0] if not classification_totals.empty else None
 top_advisor_row = top_advisors.iloc[0] if not top_advisors.empty else None
 coverage = (top_class["AC"] / total_ac * 100) if top_class is not None and total_ac else 0
 
@@ -2642,14 +2718,15 @@ with drivers_tab:
                 height=340,
             )
         else:
-            advisor_rank = (
+            advisor_rank = insert_unit_after_advisor(
                 advisor_detail.groupby(["Classification", "Advisor"], dropna=False)[
                     ["AC", "AC Settled", "AC Renewed", "NSC", "Lives"]
                 ]
                 .sum()
                 .reset_index()
                 .sort_values(ranking_metric, ascending=False)
-                .head(top_n)
+                .head(top_n),
+                unit_lookup,
             )
         if not use_custom_ranking:
             st.dataframe(advisor_rank, use_container_width=True, height=340)
@@ -2666,14 +2743,17 @@ with trends_tab:
             "Monthly AC by classification",
             lambda: _render_monthly_ac_by_classification(monthly_summary, ordered_months=period_months),
         )
+    quarterly_chart_df = drop_unit_dimension_for_charts(
+        quarterly_summary, period_col="Period Quarter"
+    )
     render_chart_card(
         "Quarterly AC trend by classification",
         lambda: (
             st.altair_chart(
                 (
                     alt.Chart(
-                        quarterly_summary.assign(
-                            **{"Period Quarter": quarterly_summary["Period Quarter"].astype(str)}
+                        quarterly_chart_df.assign(
+                            **{"Period Quarter": quarterly_chart_df["Period Quarter"].astype(str)}
                         )
                     )
                     .mark_area(opacity=0.55, interpolate="monotone")
@@ -2704,11 +2784,11 @@ with trends_tab:
                 ),
                 use_container_width=True,
             )
-            if (_altair_enabled() and not quarterly_summary.empty)
+            if (_altair_enabled() and not quarterly_chart_df.empty)
             else st.area_chart(
-                quarterly_summary.pivot(
-                    index="Period Quarter", columns="Classification", values="AC"
-                ).fillna(0),
+                drop_unit_dimension_for_charts(quarterly_summary, period_col="Period Quarter")
+                .pivot(index="Period Quarter", columns="Classification", values="AC")
+                .fillna(0),
                 height=280,
             )
         ),
@@ -2803,6 +2883,7 @@ with details_tab:
         previous_overrides: dict[str, dict[str, bool]] = dict(st.session_state.get("validation_overrides", {}))
         editor_cols = [
             "Advisor",
+            "Unit",
             "Classification",
             "AC",
             "NSC",
@@ -2835,6 +2916,7 @@ with details_tab:
             hide_index=True,
             disabled=[
                 "Advisor",
+                "Unit",
                 "Classification",
                 "AC",
                 "NSC",
@@ -2933,6 +3015,10 @@ executive_summary = pd.DataFrame(
         {"Metric": "Records", "Value": record_count},
     ]
 )
+validation_export = insert_unit_after_advisor(
+    advisor_validation.drop(columns=["Validation Row Key", "AC+NSC"], errors="ignore"),
+    unit_lookup,
+)
 export_sheets: dict[str, pd.DataFrame] = {
     "Executive Summary": executive_summary,
     "Target Status": status_df,
@@ -2940,9 +3026,7 @@ export_sheets: dict[str, pd.DataFrame] = {
     "Monthly Summary": monthly_summary,
     "Quarterly Summary": quarterly_summary,
     "Advisor Details": advisor_detail,
-    "Validation Results": advisor_validation.drop(
-        columns=["Validation Row Key", "AC+NSC"], errors="ignore"
-    ),
+    "Validation Results": validation_export,
     "Filtered Raw Data": filtered,
 }
 if use_custom_ranking:
